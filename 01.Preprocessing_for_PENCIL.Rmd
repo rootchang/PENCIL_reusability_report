@@ -1,0 +1,482 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+
+
+# Data description:
+
+1. GSE200996
+
+Original paper: Luoma, Adrienne M., et al. "Tissue-resident memory and circulating T cells are early responders to pre-surgical cancer immunotherapy." Cell 185.16 (2022): 2918-2935. https://doi.org/10.1016/j.cell.2022.06.018
+
+Data type: matched tumor and blood, scRNA-seq, scTCR-seq, bulk TCR; Samples: from 30 patients from 2 different cohorts (anti-PD-1 monotherapy, anti-PD-1+anti-CTLA-4 combination therapy)
+
+
+# Data input:
+
+Data matrix downloaded from GEO
+
+# Sample description (no healthy donors)
+
+Blood B1 (pre): P01, P02, P04, P05, P08, P09, P10, P12, P13, P14, P15, P16, P17, P18, P19, P20, P21, P22, P23, P24, P25, P26, P28, P29, P30, P31, P32
+
+Blood B2 (post): P01, P02, P04, P05, P08, P09, P10, P12, P13, P14, P15, P16, P17, P19, P20, P22, P23, P24, P26, P28, P29, P30, P31, P32
+
+Blood B3 (follow-up): P01, P02, P04, P05, P09, P10, P12, P13, P14, P15, P17, P19, P20, P21, P22, P23, P25, P32
+
+Tumor pre: P18, P23, P24, P29, P32, [P27 (do not have blood match)]
+
+Tumor post: P13, P14, P15, P16, P18, P19, P20, P21, P22, P23, P24, P25, P26, P27, P28, P29, P30, P31, P32
+
+
+
+# Aims:
+
+- integrate all patients' data object
+
+- analysis the integrated data
+
+- annotate the data with celltypist
+
+- save the integrated seurat object
+
+# load required package
+```{r, include=FALSE}
+
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(edgeR)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+dataset = 'GSE200996'
+
+# local
+data_dir <- paste0("../02.Input/", dataset, '/')
+processed_dir <- paste0("../03.Results/", dataset, '/')
+fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
+
+# server
+data_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/", dataset, '/')
+processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
+fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
+
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load seurat object (for GSE200996, ...)
+```{r}
+
+sampleType_name = 'PBMC' # 'PBMC'  'Tissue'
+
+merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,".rds"))
+
+# Normalize the data
+#merged_seu <- NormalizeData(merged_seu) # log(x/sum(x)*10000+1)
+
+# Find highly variable genes
+merged_seu <- FindVariableFeatures(merged_seu)
+# Scale the data
+merged_seu <- ScaleData(merged_seu) # pbmc <- SCTransform(pbmc, vars.to.regress = "CC.Difference")
+
+
+
+# classification mode
+#exp_data = merged_seu@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu),]
+# regression mode
+#exp_data = as.matrix(merged_seu@assays[["RNA"]]@counts)
+
+```
+
+
+# Add phenotype info
+```{r}
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+
+# Read in phenotype info.
+phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
+phenotype_df = phenotype_df[,c(1,7,9,10,15:26)]
+colnames(phenotype_df) = c(colnames(phenotype_df)[1:4],'Downstaging','RECIST_response','Volumetric_response','Viable_Tumor', 'Pathological_response', 'Pathological_response_binned', 'Max_response', 'Any_response', 'OS_days', 'PFS_days', 'PFS_event', 'OS_event')
+
+# Add phenotype info to seurat object
+meta <- merged_seu@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "patient", by.y = "patient_id")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+merged_seu <- AddMetaData(merged_seu, meta.new)
+#cell.names <- sapply(seq_along(rownames(merged_seu@meta.data)), function(i) paste0("cell_", i), USE.NAMES = F)
+#merged_seu@meta.data$cellID <- cell.names # rename cells to cell_1, cell_2, ...
+#merged_seu <- RenameCells(object = merged_seu, new.names = merged_seu@meta.data$cellID)
+#print(merged_seu$cellID[1:10])
+
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
+
+
+############## T cells
+merged_seu_Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
+# save to .h5ad for PENCIL to read
+SaveH5Seurat(merged_seu_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
+saveRDS(object = merged_seu_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
+
+
+############## B cells
+merged_seu_Bcell <- subset(merged_seu, subset = cell_type %in% c("Memory B-cells", "Plasma cells"))
+# save to .h5ad for PENCIL to read
+SaveH5Seurat(merged_seu_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
+saveRDS(object = merged_seu_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
+
+
+#print(unique(merged_seu$patient))
+#print(merged_seu$RECIST_response[1:10])
+#print(merged_seu$Any_response[1:10])
+#print(unique(merged_seu$timePt))
+#print(dim(merged_seu))
+
+```
+
+
+# load raw expression and phenotype data and construct seurat object for GSE120575_Sade_Feldman_melanoma ICB dataset
+```{r}
+
+library(readr)
+
+sampleType_name = 'Tissue'
+
+# local
+data_dir = "/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/GSE120575/"
+
+# server 
+data_dir = "/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/"
+
+# read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
+data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
+new_colnames = c(colnames(data)[2:16292],'X')
+colnames(data) = new_colnames
+data <- data[, -ncol(data)] # remove last NA column
+data <- data[-1,] # remove patientID row
+
+# Create a Seurat object
+seurat_obj <- CreateSeuratObject(counts = data)
+# Assign the normalized counts to seurat_obj[["RNA"]]@data
+seurat_obj[["RNA"]]@data <- as.matrix(seurat_obj[["RNA"]]@counts)
+# convert from log2(TPM+1) --> TPM
+seurat_obj[["RNA"]]@data <- 2^seurat_obj[["RNA"]]@data-1 
+# Create a new Seurat object with the TPM as counts
+seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data)
+seurat_obj = seurat_obj_new
+
+# Assign project name
+seurat_obj$project <- "GSE120575_Sade_Feldman_melanoma"
+
+# add phenotype info
+phenotype_df_raw <- read.table(paste0(data_dir,"GSE120575_singleCells_metaInfo_clean.txt"), sep = "\t", quote = "", header = TRUE, stringsAsFactors = FALSE)
+phenotype_df = phenotype_df_raw[,c(2,5,6,7)] # "CellID" "PatientID" "ResponseInfo" "DrugType"  
+
+colnames(phenotype_df) = c("CellID", "patient", "ResponseInfo", "DrugType")
+
+# Add phenotype info to seurat object
+seurat_obj@meta.data$cellID <- NULL
+seurat_obj@meta.data$Patient <- NULL
+seurat_obj@meta.data$ResponseInfo <- NULL
+seurat_obj@meta.data$DrugType <- NULL
+
+meta <- seurat_obj@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "cell_names", by.y = "CellID")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+meta.new <- meta.new[, !(names(meta.new) %in% c("cellID", "cell_names"))]
+seurat_obj <- AddMetaData(seurat_obj, meta.new)
+
+# Normalize the data
+seurat_obj <- NormalizeData(seurat_obj) # log(x/sum(x)*10000+1)
+
+# Find highly variable genes
+seurat_obj <- FindVariableFeatures(seurat_obj)
+
+#Calculate Cell Cycle Score (S-G2M Difference)
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+seurat_obj<- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+seurat_obj$CC.Difference <- seurat_obj$S.Score - seurat_obj$G2M.Score
+
+# Scale the data
+seurat_obj <- ScaleData(seurat_obj) # pbmc <- SCTransform(pbmc, vars.to.regress = "CC.Difference")
+
+# Perform PCA
+seurat_obj <- RunPCA(seurat_obj, pc.genes = seurat_obj@var.genes)
+
+# Perform UMAP
+seurat_obj <- RunUMAP(seurat_obj, reduction = "pca", dims = 1:30)
+
+# Find neighbors
+seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:30)
+
+# Find clusters
+seurat_obj <- FindClusters(seurat_obj, resolution = 2) # PBMC: 1   Tissue: 2
+
+# Save to file
+saveRDS(seurat_obj, file = paste0(data_dir,"seu_",sampleType_name,".rds"))
+
+
+#################################################################################
+############# Cell annotation using 20.Cell_Annotation.Rmd pipeline #############
+#################################################################################
+
+
+############## T cells
+seurat_obj_Tcell <- subset(seurat_obj, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
+# save to .h5ad for PENCIL to read
+SaveH5Seurat(seurat_obj_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
+saveRDS(object = seurat_obj_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
+
+
+############## B cells
+seurat_obj_Bcell <- subset(seurat_obj, subset = cell_type %in% c("Memory B-cells", "Plasma cells"))
+# save to .h5ad for PENCIL to read
+SaveH5Seurat(seurat_obj_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
+saveRDS(object = seurat_obj_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
+
+
+
+```
+
+
+# Run PENCIL
+```{r}
+
+```
+
+
+
+
+# Analyze PENCIL identified phenotypic cells for tumor samples
+```{r}
+
+predicted_cell_labels = read.csv("/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/PENCIL/GSE200996/py/Volumetric_response/predicted_labels.csv") # Blood_Volumetric_response   Volumetric_response
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+meta <- tumor_CD45_cells@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order. So here we directly cbind two data frames to add the predicted label information for all cells.
+tumor_CD45_cells <- AddMetaData(tumor_CD45_cells, meta.new)
+
+```
+
+# Plot predicted labels to confirm 
+```{r}
+DimPlot(tumor_CD45_cells, group.by = "predicted_label")+
+  # scale_color_manual(values = my.cols)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_predicted_label.png"), height = 120, width = 190, dpi = 800, units = "mm")
+```
+
+# Calculate R/NR cell number and ratios in each patient
+```{r}
+# Calculate the cell number for each patient
+grouped <- meta.new %>%
+  group_by(patient, predicted_label)
+
+# Calculate the number of cells for each patient and predicted_label
+cell_counts <- grouped %>%
+  summarise(cell_count = n())
+cell_counts <- cell_counts[cell_counts$predicted_label != "Rejected", ]
+
+# Create a vector with all unique patient IDs
+all_patients <- unique(cell_counts$patient)
+# Create a new data frame with all patients having both 'yes' and 'no'
+new_df <- data.frame(patient = rep(all_patients, each = 2),
+                     predicted_label = rep(c("yes", "no"), length(all_patients)))
+# Merge the new data frame with the original data frame based on patient ID and 'yes_no'
+cell_counts_new <- merge(cell_counts, new_df, by = c("patient", "predicted_label"), all = TRUE)
+# Replace missing values (NA) in the 'values' column with 0
+cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
+
+
+# Calculate the total count for each patient
+df_totals <- aggregate(cell_count ~ patient, cell_counts_new, sum)
+# Calculate the count ratios for 'yes' and 'no'
+df_ratios <- aggregate(cell_count ~ patient + predicted_label, cell_counts_new, sum)
+df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
+
+# Plot the stacked bar plot
+ggplot(df_ratios, aes(x = patient, y = ratio, fill = predicted_label)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("yes" = "blue", "no" = "red")) +
+  labs(x = "Patient", y = "Count Ratio", fill = "Response") +
+  ggtitle("Count Ratios of 'R' and 'NR' Cells for Each Patient") +
+  theme_minimal()
+ggsave(filename = paste0(fig_dir, "R_NR_cellRatio_stackedBar.png"), height = 120, width = 190, dpi = 800, units = "mm")
+```
+
+# Cell annotation for R and NR cells in tumor
+```{r}
+
+tumor_CD45_cells_R_NR = tumor_CD45_cells[,grepl("yes", tumor_CD45_cells$predicted_label) | grepl("no", tumor_CD45_cells$predicted_label)]
+
+ref <- celldex::DatabaseImmuneCellExpressionData() # celldex::BlueprintEncodeData()
+singleR <- as.SingleCellExperiment(tumor_CD45_cells_R_NR, assay= "RNA") 
+singler.anno <- SingleR(test = singleR, ref = ref, labels = (ref$label.fine))
+tumor_CD45_cells_R_NR[["DICE.fine"]] <- singler.anno$labels # Database of Immune Cell Expression (DICE).
+tumor_CD45_cells_R_NR[["DICE.fine.pruned"]] <- singler.anno$pruned.labels
+saveRDS(tumor_CD45_cells_R_NR, file = "/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/seu_tumor_CD45_R_NR.rds")
+
+tumor_CD45_cells_R_NR$major_cell_type <- tumor_CD45_cells_R_NR$DICE.fine
+tumor_CD45_cells_R_NR$major_cell_type[tumor_CD45_cells_R_NR$major_cell_type%in%c("T cells, CD4+, Th1", "T cells, CD4+, Th17","T cells, CD4+, naive", "T cells, CD4+, naive, stimulated", "T cells, CD4+, memory TREG", "T cells, CD4+, TFH", "T cells, CD4+, Th2", "T cells, CD4+, Th1_17", "T cells, CD4+, naive TREG")] <- "CD4T"
+tumor_CD45_cells_R_NR$major_cell_type[tumor_CD45_cells_R_NR$major_cell_type%in%c("T cells, CD8+, naive, stimulated", "T cells, CD8+, naive")] <- "CD8T"
+
+
+
+```
+
+# Plot UMAP of R and NR cells
+```{r}
+#### plot singleR annotation
+DimPlot(tumor_CD45_cells_R_NR, group.by = "major_cell_type", label = TRUE, repel = TRUE, label.size = 2)+NoLegend()+
+  # scale_color_manual(values = my_cols)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_singler.png"), height = 120, width = 140, dpi = 800, units = "mm")
+
+# BiocManager::install("dittoSeq")
+library(dittoSeq)
+dittoDimPlot(tumor_CD45_cells_R_NR, var = "major_cell_type", split.by = "predicted_label", size = 0.1)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_predicted_label_split.png"), height = 120, width = 280, dpi = 800, units = "mm")
+dittoBarPlot(tumor_CD45_cells_R_NR, var = "Volumetric_response", group.by = "DICE.fine")+ # predicted_label
+  labs(x = "")+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_Volumetric_response_abundance.png"), height = 90, width = 200, dpi = 800, units = "mm")
+```
+
+# SingleR for tumor_CD45_cells
+```{r}
+ref <- celldex::DatabaseImmuneCellExpressionData() # celldex::BlueprintEncodeData()
+singleR <- as.SingleCellExperiment(tumor_CD45_cells, assay= "RNA") 
+singler.anno <- SingleR(test = singleR, ref = ref, labels = (ref$label.fine))
+tumor_CD45_cells[["DICE.fine"]] <- singler.anno$labels # Database of Immune Cell Expression (DICE).
+tumor_CD45_cells[["DICE.fine.pruned"]] <- singler.anno$pruned.labels
+dittoBarPlot(tumor_CD45_cells, var = "Volumetric_response", group.by = "DICE.fine.pruned")+ # predicted_label
+  labs(x = "")+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_Volumetric_response_abundance.png"), height = 90, width = 200, dpi = 800, units = "mm")
+saveRDS(object = tumor_CD45_cells, file = "/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/seu_tumor_CD45_singler_GSE200996.rds") # Here all genes are saves
+```
+
+# Analyze PENCIL identified phenotypic cells for blood samples
+```{r}
+
+predicted_cell_labels = read.csv("/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/PENCIL/GSE200996/py/Blood_Volumetric_response/predicted_labels.csv") # Blood_Volumetric_response   Volumetric_response
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+meta <- blood_cells@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order. So here we directly cbind two data frames to add the predicted label information for all cells.
+blood_cells <- AddMetaData(blood_cells, meta.new)
+
+```
+
+# Plot predicted labels to confirm 
+```{r}
+DimPlot(blood_cells, group.by = "predicted_label")+
+  # scale_color_manual(values = my.cols)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_Blood_predicted_label.png"), height = 120, width = 190, dpi = 800, units = "mm")
+```
+
+# Calculate R/NR cell number and ratios in each patient
+```{r}
+# Calculate the cell number for each patient
+grouped <- meta.new %>%
+  group_by(meta, predicted_label)
+
+# Calculate the number of cells for each patient and predicted_label
+cell_counts <- grouped %>%
+  summarise(cell_count = n())
+#cell_counts <- cell_counts[cell_counts$predicted_label != "Rejected", ]
+
+# Create a vector with all unique patient IDs
+all_patients <- unique(cell_counts$meta)
+# Create a new data frame with all patients having both 'yes' and 'no'
+new_df <- data.frame(meta = rep(all_patients, each = 3),
+                     predicted_label = rep(c("yes", "no", "Rejected"), length(all_patients)))
+# Merge the new data frame with the original data frame based on patient ID and 'yes_no'
+cell_counts_new <- merge(cell_counts, new_df, by = c("meta", "predicted_label"), all = TRUE)
+# Replace missing values (NA) in the 'values' column with 0
+cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
+
+
+# Calculate the total count for each patient
+df_totals <- aggregate(cell_count ~ meta, cell_counts_new, sum)
+# Calculate the count ratios for 'yes' and 'no'
+df_ratios <- aggregate(cell_count ~ meta + predicted_label, cell_counts_new, sum)
+df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
+
+# Plot the stacked bar plot
+ggplot(df_ratios, aes(x = meta, y = ratio, fill = predicted_label)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("yes" = "blue", "no" = "red")) +
+  labs(x = "Patient", y = "Count Ratio", fill = "Response") +
+  ggtitle("Count Ratios of 'R' and 'NR' Cells for Each Patient") +
+  theme_minimal()
+ggsave(filename = paste0(fig_dir, "Blood_R_NR_cellRatio_stackedBar.png"), height = 120, width = 190, dpi = 800, units = "mm")
+```
