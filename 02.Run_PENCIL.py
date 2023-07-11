@@ -31,7 +31,7 @@ print('Raw phenotypic labels: ', set(labels_raw))
 if interrupt:
     raise Exception('Interrupt to check the raw phenotypic labels')
 # Specify the phenotypic values to be removed
-values_to_remove = ['not measurable']
+values_to_remove = ['NA'] # ['not measurable']
 # Subset the AnnData object
 adata = adata[~adata.obs[phenotype].isin(values_to_remove)]#.copy()
 labels_raw = adata.obs[phenotype]
