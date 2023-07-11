@@ -96,10 +96,10 @@ library(stringr)
 # set input and output directories & parameters
 ```{r}
 
-dataset = 'GSE200996'
+dataset = 'GSE169246' # 'GSE200996'   'GSE120575'   'GSE169246'
 
 # local
-data_dir <- paste0("../02.Input/", dataset, '/')
+data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
 processed_dir <- paste0("../03.Results/", dataset, '/')
 fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
 
@@ -121,10 +121,10 @@ R
 
 ```
 
-# load seurat object (for GSE200996, ...)
+# load seurat object
 ```{r}
 
-sampleType_name = 'PBMC' # 'PBMC'  'Tissue'
+sampleType_name = 'Tissue' # 'PBMC'  'Tissue'
 
 merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,".rds"))
 
@@ -146,7 +146,7 @@ merged_seu <- ScaleData(merged_seu) # pbmc <- SCTransform(pbmc, vars.to.regress 
 ```
 
 
-# Add phenotype info
+# Add phenotype info for GSE200996 (Luoma et al., HNSCC, ICB dataset)
 ```{r}
 #devtools::install_github("mojaveazure/seurat-disk")
 #devtools::install_github('satijalab/seurat-data')
@@ -173,50 +173,67 @@ merged_seu <- AddMetaData(merged_seu, meta.new)
 saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
 
 
-############## T cells
-merged_seu_Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
-# save to .h5ad for PENCIL to read
-SaveH5Seurat(merged_seu_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
-Convert(paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-saveRDS(object = merged_seu_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
-
-
-############## B cells
-merged_seu_Bcell <- subset(merged_seu, subset = cell_type %in% c("Memory B-cells", "Plasma cells"))
-# save to .h5ad for PENCIL to read
-SaveH5Seurat(merged_seu_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
-Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-saveRDS(object = merged_seu_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
-
-
-#print(unique(merged_seu$patient))
-#print(merged_seu$RECIST_response[1:10])
-#print(merged_seu$Any_response[1:10])
-#print(unique(merged_seu$timePt))
-#print(dim(merged_seu))
 
 ```
 
 
-# load raw expression and phenotype data and construct seurat object for GSE120575_Sade_Feldman_melanoma ICB dataset
+# Add phenotype info for GSE169246 (Zeming Zhang, TNBC, ICB dataset)
+```{r}
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+
+# Read in phenotype info.
+phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
+phenotype_df = phenotype_df[,c(1,7,9,10,15:26)]
+colnames(phenotype_df) = c(colnames(phenotype_df)[1:4],'Downstaging','RECIST_response','Volumetric_response','Viable_Tumor', 'Pathological_response', 'Pathological_response_binned', 'Max_response', 'Any_response', 'OS_days', 'PFS_days', 'PFS_event', 'OS_event')
+
+# Add phenotype info to seurat object
+meta <- merged_seu@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "patient", by.y = "patient_id")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+merged_seu <- AddMetaData(merged_seu, meta.new)
+#cell.names <- sapply(seq_along(rownames(merged_seu@meta.data)), function(i) paste0("cell_", i), USE.NAMES = F)
+#merged_seu@meta.data$cellID <- cell.names # rename cells to cell_1, cell_2, ...
+#merged_seu <- RenameCells(object = merged_seu, new.names = merged_seu@meta.data$cellID)
+#print(merged_seu$cellID[1:10])
+
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
+
+
+
+```
+
+# load raw expression and phenotype data and construct seurat object for GSE120575 (Sade-Feldman et al., melanoma, ICB dataset)
 ```{r}
 
 library(readr)
 
 sampleType_name = 'Tissue'
 
-# local
-data_dir = "/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/GSE120575/"
-
-# server 
-data_dir = "/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/"
-
 # read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
 data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
 new_colnames = c(colnames(data)[2:16292],'X')
 colnames(data) = new_colnames
 data <- data[, -ncol(data)] # remove last NA column
+patient_df <- data.frame(patient = t(data[1,]))
+colnames(patient_df) = c('patient')
+patient_df$patient <- sub("Post_P17_myeloid_enriched", "Post_P17", patient_df$patient)
+patient_df$patient <- sub("Post_P19_myeloid_enriched", "Post_P19", patient_df$patient)
+patient_df$patient <- sub("Post_P2_T_enriched", "Post_P2", patient_df$patient)
+patient_df$patient <- sub("Post_P4_T_enriched", "Post_P4", patient_df$patient)
+patient_df$patient <- sub("Post_P10_T_enriched", "Post_P10", patient_df$patient)
+patient_df$patient <- sub("Post_P13_T_enriched", "Post_P13", patient_df$patient)
+patient_df$patient <- sub("Post_P8_T_enriched", "Post_P8", patient_df$patient)
+patient_df$patient <- sub("Post_P16_T_enriched", "Post_P16", patient_df$patient)
+patient_df$patient <- sub("Post_P6_T_enriched", "Post_P6", patient_df$patient)
+patient_df$cellID = rownames(patient_df)
 data <- data[-1,] # remove patientID row
+
+
 
 # Create a Seurat object
 seurat_obj <- CreateSeuratObject(counts = data)
@@ -233,76 +250,105 @@ seurat_obj$project <- "GSE120575_Sade_Feldman_melanoma"
 
 # add phenotype info
 phenotype_df_raw <- read.table(paste0(data_dir,"GSE120575_singleCells_metaInfo_clean.txt"), sep = "\t", quote = "", header = TRUE, stringsAsFactors = FALSE)
-phenotype_df = phenotype_df_raw[,c(2,5,6,7)] # "CellID" "PatientID" "ResponseInfo" "DrugType"  
+phenotype_df = phenotype_df_raw[,c(5,6,7)] # "CellID" "PatientID" "ResponseInfo" "DrugType"  
+colnames(phenotype_df) = c("patient", "ResponseInfo", "DrugType")
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+# keep only non-duplicated patientID --> dim(phenotype_df.new)=c(48,3)
+phenotype_df.new <- merge(patient_df, phenotype_df, by.x = "patient", by.y = "patient")
+rownames(phenotype_df.new) <- phenotype_df.new$cellID
 
-colnames(phenotype_df) = c("CellID", "patient", "ResponseInfo", "DrugType")
 
 # Add phenotype info to seurat object
-seurat_obj@meta.data$cellID <- NULL
-seurat_obj@meta.data$Patient <- NULL
-seurat_obj@meta.data$ResponseInfo <- NULL
-seurat_obj@meta.data$DrugType <- NULL
+# seurat_obj@meta.data$cellID <- NULL
+# seurat_obj@meta.data$patient <- NULL
+# seurat_obj@meta.data$ResponseInfo <- NULL
+# seurat_obj@meta.data$DrugType <- NULL
 
 meta <- seurat_obj@meta.data
 meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
-meta.new <- merge(meta, phenotype_df, by.x = "cell_names", by.y = "CellID")
+meta.new <- merge(meta, phenotype_df.new, by.x = "cell_names", by.y = "cellID")
 rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
 meta.new <- meta.new[, !(names(meta.new) %in% c("cellID", "cell_names"))]
 seurat_obj <- AddMetaData(seurat_obj, meta.new)
-
-# Normalize the data
-seurat_obj <- NormalizeData(seurat_obj) # log(x/sum(x)*10000+1)
-
-# Find highly variable genes
-seurat_obj <- FindVariableFeatures(seurat_obj)
-
-#Calculate Cell Cycle Score (S-G2M Difference)
-s.genes <- cc.genes$s.genes
-g2m.genes <- cc.genes$g2m.genes
-seurat_obj<- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
-seurat_obj$CC.Difference <- seurat_obj$S.Score - seurat_obj$G2M.Score
-
-# Scale the data
-seurat_obj <- ScaleData(seurat_obj) # pbmc <- SCTransform(pbmc, vars.to.regress = "CC.Difference")
-
-# Perform PCA
-seurat_obj <- RunPCA(seurat_obj, pc.genes = seurat_obj@var.genes)
-
-# Perform UMAP
-seurat_obj <- RunUMAP(seurat_obj, reduction = "pca", dims = 1:30)
-
-# Find neighbors
-seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:30)
-
-# Find clusters
-seurat_obj <- FindClusters(seurat_obj, resolution = 2) # PBMC: 1   Tissue: 2
-
-# Save to file
-saveRDS(seurat_obj, file = paste0(data_dir,"seu_",sampleType_name,".rds"))
 
 
 #################################################################################
 ############# Cell annotation using 20.Cell_Annotation.Rmd pipeline #############
 #################################################################################
 
+##### Re-do CD8T cell annotation using original annotation by Sade-Feldman et al. 2018 Cell 
+
+CD8T_cellID = read.csv(file = paste0(data_dir,"CD8T_original_cellAnno.csv"))
+
+CD8T_cellID$Cell.Name <- gsub("-", ".", CD8T_cellID$Cell.Name)
+
+merged_seu@meta.data$cell_type_original <- "Other"
+
+merged_seu@meta.data$cell_type_original[rownames(merged_seu@meta.data) %in% CD8T_cellID$Cell.Name] <- "CD8+ T-cells"
+
+#### compare self annotation and original annotation with UMAP
+# Plot cell_type_original clusters
+DimPlot(merged_seu, group.by = "cell_type_original", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_cellTypeOriginalPaper_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+
+# Plot cell_type CD8T clusters
+merged_seu$highlighted.clusters <- ifelse(merged_seu$cell_type %in% c("CD8+ T-cells"), as.character(merged_seu$cell_type), "Other")
+DimPlot(merged_seu, group.by = "highlighted.clusters", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_cellTypeSelf_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+
+```
+
+
+# subset seurat to focus on cell types of interest (e.g. CD8T, CD4T, B, ...)
+```{r}
+############## CD8T cells
+if (dataset == "GSE120575"){
+  merged_seu_CD8Tcell <- subset(merged_seu, subset = cell_type_original %in% c("CD8+ T-cells"))
+  # save to .h5ad for PENCIL to read
+  SaveH5Seurat(merged_seu_CD8Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), overwrite = TRUE)
+  Convert(paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes log1p data.
+  # saveRDS(object = merged_seu_CD8Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.rds")) 
+}else{
+  merged_seu_CD8Tcell <- subset(merged_seu, subset = cell_type %in% c("CD8+ T-cells"))
+  # save to .h5ad for PENCIL to read
+  SaveH5Seurat(merged_seu_CD8Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), overwrite = TRUE)
+  Convert(paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes log1p data.
+  # saveRDS(object = merged_seu_CD8Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.rds")) 
+}
+
+############## CD4T cells
+merged_seu_CD4Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "Tregs"))
+# save to .h5ad for PENCIL to read
+SaveH5Seurat(merged_seu_CD4Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
+# saveRDS(object = merged_seu_CD4Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.rds")) 
+
+
 
 ############## T cells
-seurat_obj_Tcell <- subset(seurat_obj, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
+merged_seu_Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
 # save to .h5ad for PENCIL to read
-SaveH5Seurat(seurat_obj_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
+SaveH5Seurat(merged_seu_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
 Convert(paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-saveRDS(object = seurat_obj_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
+#saveRDS(object = merged_seu_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
 
 
 ############## B cells
-seurat_obj_Bcell <- subset(seurat_obj, subset = cell_type %in% c("Memory B-cells", "Plasma cells"))
+merged_seu_Bcell <- subset(merged_seu, subset = cell_type %in% c("Naive B-cells", "Memory B-cells", "Plasma cells"))
 # save to .h5ad for PENCIL to read
-SaveH5Seurat(seurat_obj_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
+SaveH5Seurat(merged_seu_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
 Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-saveRDS(object = seurat_obj_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
+#saveRDS(object = merged_seu_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
 
 
-
+#print(unique(merged_seu$patient))
+#print(merged_seu$RECIST_response[1:10])
+#print(merged_seu$Any_response[1:10])
+#print(unique(merged_seu$timePt))
+#print(dim(merged_seu))
 ```
 
 
