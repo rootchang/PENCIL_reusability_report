@@ -7,6 +7,7 @@ This is an ongoing project. To do list:
 1. UMAP of patients, R/NR binarized patient labels, PENCIL annotation (R/NR/Rej.)
 2. Marker gene analysis
 3. Enriched pathway analysis
+4. Known signature enrichment (e.g. CD8T exh., cyt., TRM., ...)
 4. Use the learned biological information to predict on new datasets
 5. Please add more ...
 
@@ -60,13 +61,13 @@ Table 1. Explanation for the parameters used by `02.Run_PENCIL.py`.
 
 ```{bash}
 # tissue CD8T cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_CD8T multi-classification 1 0
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_Tissue_CD8T multi-classification 1 0
 
 # tissue CD4T cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD4T.h5ad ResponseInfo GSE120575_CD4T multi-classification 1 0
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD4T.h5ad ResponseInfo GSE120575_Tissue_CD4T multi-classification 1 0
 
 # tissue B cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_B.h5ad ResponseInfo GSE120575_B multi-classification 1 0
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_B.h5ad ResponseInfo GSE120575_Tissue_B multi-classification 1 0
 
 ```
 

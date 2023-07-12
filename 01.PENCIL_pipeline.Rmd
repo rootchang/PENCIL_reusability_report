@@ -392,7 +392,13 @@ colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
 meta <- merged_seu@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu <- AddMetaData(merged_seu, meta.new)
-#merged_seu@meta.data$predicted_label = NULL
+#merged_seu@meta.data$PENCIL_pred_label = NULL
+
+merged_seu$timePt <- ifelse(grepl("^Pre_", merged_seu$patient), "pre", "post")
+merged_seu$patient <- gsub("^Pre_|^Post_", "", merged_seu$patient)
+
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".rds")) 
+
 
 ```
 
@@ -401,156 +407,54 @@ merged_seu <- AddMetaData(merged_seu, meta.new)
 
 DimPlot(merged_seu, group.by = "seurat_clusters")+
   ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_seuratCluster.png"), height = 120, width = 190, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_seuratCluster_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
 
 DimPlot(merged_seu, group.by = "patient")+
   ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_patientID.png"), height = 120, width = 190, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_patientID_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
-DimPlot(merged_seu, group.by = "Any_response")+
+DimPlot(merged_seu, group.by = "timePt")+
   ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_anyResponse.png"), height = 120, width = 190, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_timePt_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
+DimPlot(merged_seu, group.by = phenotype_name)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_",phenotype_name,'_',sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
 
 DimPlot(merged_seu, group.by = "PENCIL_pred_label")+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_PENCILpredLabel.png"), height = 120, width = 190, dpi = 800, units = "mm")
+  ggtitle("")+
+  xlab("Cell label")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_PENCILpredLabel_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
 ```
 
+
 # Calculate R/NR cell number and ratios in each patient
 ```{r}
+
 # Calculate the cell number for each patient
-grouped <- meta.new %>%
-  group_by(patient, predicted_label)
+grouped <- merged_seu@meta.data %>%
+  group_by(meta, PENCIL_pred_label)
 
 # Calculate the number of cells for each patient and predicted_label
 cell_counts <- grouped %>%
   summarise(cell_count = n())
-cell_counts <- cell_counts[cell_counts$predicted_label != "Rejected", ]
-
-# Create a vector with all unique patient IDs
-all_patients <- unique(cell_counts$patient)
-# Create a new data frame with all patients having both 'yes' and 'no'
-new_df <- data.frame(patient = rep(all_patients, each = 2),
-                     predicted_label = rep(c("yes", "no"), length(all_patients)))
-# Merge the new data frame with the original data frame based on patient ID and 'yes_no'
-cell_counts_new <- merge(cell_counts, new_df, by = c("patient", "predicted_label"), all = TRUE)
-# Replace missing values (NA) in the 'values' column with 0
-cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
-
-
-# Calculate the total count for each patient
-df_totals <- aggregate(cell_count ~ patient, cell_counts_new, sum)
-# Calculate the count ratios for 'yes' and 'no'
-df_ratios <- aggregate(cell_count ~ patient + predicted_label, cell_counts_new, sum)
-df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
-
-# Plot the stacked bar plot
-ggplot(df_ratios, aes(x = patient, y = ratio, fill = predicted_label)) +
-  geom_bar(stat = "identity") +
-  scale_fill_manual(values = c("yes" = "blue", "no" = "red")) +
-  labs(x = "Patient", y = "Count Ratio", fill = "Response") +
-  ggtitle("Count Ratios of 'R' and 'NR' Cells for Each Patient") +
-  theme_minimal()
-ggsave(filename = paste0(fig_dir, "R_NR_cellRatio_stackedBar.png"), height = 120, width = 190, dpi = 800, units = "mm")
-```
-
-# Cell annotation for R and NR cells in tumor
-```{r}
-
-tumor_CD45_cells_R_NR = tumor_CD45_cells[,grepl("yes", tumor_CD45_cells$predicted_label) | grepl("no", tumor_CD45_cells$predicted_label)]
-
-ref <- celldex::DatabaseImmuneCellExpressionData() # celldex::BlueprintEncodeData()
-singleR <- as.SingleCellExperiment(tumor_CD45_cells_R_NR, assay= "RNA") 
-singler.anno <- SingleR(test = singleR, ref = ref, labels = (ref$label.fine))
-tumor_CD45_cells_R_NR[["DICE.fine"]] <- singler.anno$labels # Database of Immune Cell Expression (DICE).
-tumor_CD45_cells_R_NR[["DICE.fine.pruned"]] <- singler.anno$pruned.labels
-saveRDS(tumor_CD45_cells_R_NR, file = "/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/seu_tumor_CD45_R_NR.rds")
-
-tumor_CD45_cells_R_NR$major_cell_type <- tumor_CD45_cells_R_NR$DICE.fine
-tumor_CD45_cells_R_NR$major_cell_type[tumor_CD45_cells_R_NR$major_cell_type%in%c("T cells, CD4+, Th1", "T cells, CD4+, Th17","T cells, CD4+, naive", "T cells, CD4+, naive, stimulated", "T cells, CD4+, memory TREG", "T cells, CD4+, TFH", "T cells, CD4+, Th2", "T cells, CD4+, Th1_17", "T cells, CD4+, naive TREG")] <- "CD4T"
-tumor_CD45_cells_R_NR$major_cell_type[tumor_CD45_cells_R_NR$major_cell_type%in%c("T cells, CD8+, naive, stimulated", "T cells, CD8+, naive")] <- "CD8T"
-
-
-
-```
-
-# Plot UMAP of R and NR cells
-```{r}
-#### plot singleR annotation
-DimPlot(tumor_CD45_cells_R_NR, group.by = "major_cell_type", label = TRUE, repel = TRUE, label.size = 2)+NoLegend()+
-  # scale_color_manual(values = my_cols)+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_singler.png"), height = 120, width = 140, dpi = 800, units = "mm")
-
-# BiocManager::install("dittoSeq")
-library(dittoSeq)
-dittoDimPlot(tumor_CD45_cells_R_NR, var = "major_cell_type", split.by = "predicted_label", size = 0.1)+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_predicted_label_split.png"), height = 120, width = 280, dpi = 800, units = "mm")
-dittoBarPlot(tumor_CD45_cells_R_NR, var = "Volumetric_response", group.by = "DICE.fine")+ # predicted_label
-  labs(x = "")+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_R_NR_Volumetric_response_abundance.png"), height = 90, width = 200, dpi = 800, units = "mm")
-```
-
-# SingleR for tumor_CD45_cells
-```{r}
-ref <- celldex::DatabaseImmuneCellExpressionData() # celldex::BlueprintEncodeData()
-singleR <- as.SingleCellExperiment(tumor_CD45_cells, assay= "RNA") 
-singler.anno <- SingleR(test = singleR, ref = ref, labels = (ref$label.fine))
-tumor_CD45_cells[["DICE.fine"]] <- singler.anno$labels # Database of Immune Cell Expression (DICE).
-tumor_CD45_cells[["DICE.fine.pruned"]] <- singler.anno$pruned.labels
-dittoBarPlot(tumor_CD45_cells, var = "Volumetric_response", group.by = "DICE.fine.pruned")+ # predicted_label
-  labs(x = "")+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_tumor_CD45_cells_Volumetric_response_abundance.png"), height = 90, width = 200, dpi = 800, units = "mm")
-saveRDS(object = tumor_CD45_cells, file = "/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/seu_tumor_CD45_singler_GSE200996.rds") # Here all genes are saves
-```
-
-# Analyze PENCIL identified phenotypic cells for blood samples
-```{r}
-
-predicted_cell_labels = read.csv("/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/PENCIL/GSE200996/py/Blood_Volumetric_response/predicted_labels.csv") # Blood_Volumetric_response   Volumetric_response
-predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-meta <- blood_cells@meta.data
-meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order. So here we directly cbind two data frames to add the predicted label information for all cells.
-blood_cells <- AddMetaData(blood_cells, meta.new)
-
-```
-
-# Plot predicted labels to confirm 
-```{r}
-DimPlot(blood_cells, group.by = "predicted_label")+
-  # scale_color_manual(values = my.cols)+
-  ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_Blood_predicted_label.png"), height = 120, width = 190, dpi = 800, units = "mm")
-```
-
-# Calculate R/NR cell number and ratios in each patient
-```{r}
-# Calculate the cell number for each patient
-grouped <- meta.new %>%
-  group_by(meta, predicted_label)
-
-# Calculate the number of cells for each patient and predicted_label
-cell_counts <- grouped %>%
-  summarise(cell_count = n())
-#cell_counts <- cell_counts[cell_counts$predicted_label != "Rejected", ]
+cell_counts <- cell_counts[cell_counts$PENCIL_pred_label != "Rejected", ]
 
 # Create a vector with all unique patient IDs
 all_patients <- unique(cell_counts$meta)
 # Create a new data frame with all patients having both 'yes' and 'no'
-new_df <- data.frame(meta = rep(all_patients, each = 3),
-                     predicted_label = rep(c("yes", "no", "Rejected"), length(all_patients)))
+new_df <- data.frame(meta = rep(all_patients, each = 2),
+                     PENCIL_pred_label = rep(c("yes", "no"), length(all_patients)))
 # Merge the new data frame with the original data frame based on patient ID and 'yes_no'
-cell_counts_new <- merge(cell_counts, new_df, by = c("meta", "predicted_label"), all = TRUE)
+cell_counts_new <- merge(cell_counts, new_df, by = c("meta", "PENCIL_pred_label"), all = TRUE)
 # Replace missing values (NA) in the 'values' column with 0
 cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
 
@@ -558,15 +462,181 @@ cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
 # Calculate the total count for each patient
 df_totals <- aggregate(cell_count ~ meta, cell_counts_new, sum)
 # Calculate the count ratios for 'yes' and 'no'
-df_ratios <- aggregate(cell_count ~ meta + predicted_label, cell_counts_new, sum)
+df_ratios <- aggregate(cell_count ~ meta + PENCIL_pred_label, cell_counts_new, sum)
 df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
+df_ratios$meta0 = df_ratios$meta
+df_ratios$meta <- sub("_tumor$", "", df_ratios$meta)
+df_ratios$patient <- str_extract(df_ratios$meta, ".*(?=_)")
+
+phenotype_df = merged_seu@meta.data[c('patient', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+# keep only non-duplicated patientID --> dim(phenotype_df.new)=c(48,3)
+df_ratios <- merge(df_ratios, phenotype_df, by.x = "patient", by.y = "patient")
+df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
+df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
+
 
 # Plot the stacked bar plot
-ggplot(df_ratios, aes(x = meta, y = ratio, fill = predicted_label)) +
+ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
   geom_bar(stat = "identity") +
-  scale_fill_manual(values = c("yes" = "blue", "no" = "red")) +
-  labs(x = "Patient", y = "Count Ratio", fill = "Response") +
-  ggtitle("Count Ratios of 'R' and 'NR' Cells for Each Patient") +
-  theme_minimal()
-ggsave(filename = paste0(fig_dir, "Blood_R_NR_cellRatio_stackedBar.png"), height = 120, width = 190, dpi = 800, units = "mm")
+  labs(x = "Patient", y = "Count ratio", fill = "Response") +
+  theme(
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) # +
+  #scale_fill_manual(values = c("yes" = "#A6CEE3FF", "no" = "#5AA3DAFF"))
+
+ggsave(filename = paste0(fig_dir, "stackedBar_cellRatio_", cellType_of_interest, "_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
+
 ```
+
+# Calculate known ICB signature UCell score 
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+ICB_sig <- list(
+    exh_sig = c('PDCD1', 'CTLA4', 'LAG3', 'HAVCR2', 'TIGIT'), # blood scRNAseq HNSCC ms
+    cyt_sig = c("GZMA", "PRF1"), # blood scRNAseq HNSCC ms
+    CXCL13_sig = c("CXCL13"), # blood scRNAseq HNSCC ms
+    periT_sig = c('GPR18', 'HLA-DOA', 'STAT1'), # Y. Bareche et al. 2022 AoO
+    STAT1_sig = c('STAT1', 'GBP1', 'IRF1', 'WARS', 'PLAAT4', 'CXCL9', 'GBP5', 'LAP3', 'APOL3', 'IDO1', 'GBP4', 'LAG3', 'CXCL10', 'GZMA', 'PRF1', 'IFNG', 'GBP2', 'CCR5', 'SLC31A2', 'APOL6', 'CXCL11', 'SERPINA1', 'FCGR1B', 'TNFSF10', 'GZMK', 'CST7', 'FGL2', 'TAP1', 'SERPING1', 'FCER1G', 'CD2', 'GIMAP4', 'IFIT3', 'CCL4', 'CXCR6', 'GIMAP5', 'XAF1', 'SLAMF7', 'ANKRD22'), # Y. Bareche et al. 2022 AoO
+    TCI0_sig = c('CCL5', 'CD27', 'CD274', 'CD276', 'CD8A', 'CMKLR1', 'CXCL9', 'CXCR6', 'HLA-DQA1', 'HLA-DRB1', 'HLA-E', 'IDO1', 'LAG3', 'NKG7', 'PDCD1LG2 '), # Y. Bareche et al. 2022 AoO
+    TIS_sig = c('CD276', 'HLA-DQA1', 'CD274', 'IDO1', 'HLA-DRB1', 'HLA-E', 'CMKLR1', 'PDCD1LG2', 'PSMB10', 'LAG3', 'CXCL9', 'STAT1', 'CD8A', 'CCL5', 'NKG7', 'TIGIT', 'CD27', 'CXCR6'), # Y. Bareche et al. 2022 AoO
+    cyt2_sig = c('PRF1', 'GZMB', 'GZMA', 'GZMH', 'NKG7', 'GNLY'), # (Mathewson et al., 2021)
+    Teff_sig = c('CD8A', 'EOMES', 'PRF1', 'IFNG', 'CD274'), # David F. McDermott et al. 2018 Nat Med
+    Teff_IFNG_sig = c('CD8A', 'GZMA', 'GZMB', 'IFNG', 'EOMES', 'CXCL9', 'CXCL10', 'TBX21'), # Louis Fehrenbacher et al 2016 Lancet
+    NKR_sig = c('KLRD1', 'FGFBP2', 'FCGR3A', 'S1PR5', 'KLRC1', 'KLRC3', 'KLRB1', 'KLRC2'), # Luoma et al. Cell 2022
+    preIFNG_sig = c('IFNG', 'STAT1', 'CCR5', 'CXCL9', 'CXCL10', 'CXCL11', 'IDO1', 'PRF1', 'GZMA', 'HLA-DRA'), # Ayers et al. 2017 JCI
+    preTCI_sig = c('IL2RG', 'CXCR6', 'CD3D', 'CD2', 'ITGAL', 'TAGAP', 'CIITA', 'HLA-DRA', 'PTPRC', 'CXCL9', 'CCL5', 'NKG7', 'GZMA', 'PRF1', 'CCR5', 'CD3E', 'GZMK', 'IFNG', 'HLA-E', 'GZMB', 'PDCD1', 'SLAMF6', 'CXCL13', 'CXCL10', 'IDO1', 'LAG3', 'STAT1', 'CXCL11'), # preliminary expanded immune sig. Ayers et al. 2017 JCI
+    IFNG_sig = c('IDO1', 'CXCL10', 'CXCL9', 'HLA-DRA', 'IFNG', 'STAT1'), # Ayers et al. 2017 JCI
+    TCI_sig = c('CD3D', 'IDO1', 'CIITA', 'CD3E', 'CCL5', 'GZMK', 'CD2', 'HLA-DRA', 'CXCL13', 'IL2RG', 'NKG7', 'HLA-E', 'CXCR6', 'LAG3', 'TAGAP', 'CXCL10', 'STAT1', 'GZMB'), # Ayers et al. 2017 JCI,
+    prolif_sig = c('BUB1', 'CCNB2', 'CDK1', 'CDKN3', 'FOXM1', 'PCLAF', 'MAD2L1', 'MELK', 'MKI67', 'TOP2A'), # Pabla et al. 2019 JITC
+    TRM_sig1 = c("IL17A", "IL10", "IL2", "IFNG", "DUSP6", "PDCD1", "CRTAM", "ITGA1", "ITGAE", "CD69", "CD101", "CXCR6", "SELL-", "S1PR1-", "S1PR5-", "CX3CR1-", "MKI67-", "KLF2-", "KLF3-"), # "IL-17", "IL-10", "IL-2", "IFN-r", "DUSP6", "PD-1", "CRTAM", "CD49a", "CD103", "CD69", "CD101", "CXCR6", "CD62L-", "S1PR1-", "S1PR5-", "CX3CR1-", "Ki67-", "KLF2-", "KLF3-": Kumar et al. 2017 Cell Reports
+    TRM_sig2 = c("ITGAE","VIM","ITGA1","TNFSF9") # Poon et al. Nature Immunology 2023
+)
+
+if('exh_sig' %in% colnames(merged_seu@meta.data)) {
+  # merged_seu@meta.data$CD4T = NULL
+  1
+} else {
+  merged_seu <- AddModuleScore_UCell(merged_seu, features=ICB_sig, name=NULL)
+}
+
+
+```
+
+# Violin plot of know gene scores for N/NR cells
+```{r}
+
+feats <- c("exh_sig", "cyt_sig", "CXCL13_sig", "periT_sig", "STAT1_sig", "TCI0_sig", "TIS_sig", "cyt2_sig", "Teff_sig", "Teff_IFNG_sig", "NKR_sig", "preIFNG_sig", "preTCI_sig", "IFNG_sig", "TCI_sig", "prolif_sig", "TRM_sig1", "TRM_sig2")
+p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = feats, pt.size = 0, ncol = 6) +
+  NoLegend()
+ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_ICBsig_PENCILpredLabel_",sampleType_name,".pdf"),  width = 14, height = 8)
+
+```
+
+
+# Known ICG differential expressions (79 ICGs) with FDR < 0.05 in R/NR cells
+```{r}
+
+ICG_list = c('ADORA2A', 'BTLA', 'BTN2A1', 'BTN2A2', 'BTN3A1', 'BTNL3', 'BTNL9', 'C10orf54', 'CD160', 'CD209', 'CD226', 'CD27', 'CD274', 'CD276', 'CD28', 'CD40', 'CD40LG', 'CD47', 'CD70', 'CD80', 'CD86', 'CD96', 'CEACAM1', 'CTLA4', 'HAVCR2', 'HLA-A', 'HLA-B', 'HLA-C', 'HLA-DMA', 'HLA-DMB', 'HLA-DOA', 'HLA-DOB', 'HLA-DPA1', 'HLA-DPB1', 'HLA-DQA1', 'HLA-DQB1', 'HLA-DRA', 'HLA-DRB1', 'HLA-DRB3', 'HLA-DRB4', 'HLA-DRB5', 'HLA-E', 'HLA-F', 'HLA-G', 'ICOS', 'ICOSLG', 'IDO1', 'KIR2DL1', 'KIR2DL2', 'KIR2DL3', 'KIR2DL4', 'KIR2DL5A', 'KIR2DL5B', 'KIR2DS1', 'KIR2DS2', 'KIR2DS3', 'KIR2DS4', 'KIR2DS5', 'KIR3DL1', 'KIR3DL2', 'KIR3DL3', 'KIR3DS1', 'LAG3', 'LGALS9', 'PDCD1', 'PDCD1LG2', 'PVR', 'SIRPA', 'TDO2', 'TIGIT', 'TNFRSF14', 'TNFRSF18', 'TNFRSF4', 'TNFRSF9', 'TNFSF14', 'TNFSF18', 'TNFSF4', 'TNFSF9', 'VTCN1')
+
+p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = ICG_list[1:40], pt.size = 0, ncol = 10) +
+  NoLegend()+
+  labs(x = "", y ="")
+ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_ICG1_PENCILpredLabel_",sampleType_name,".pdf"),  width = 14, height = 8)
+
+p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = ICG_list[41:79], pt.size = 0, ncol = 10) +
+  NoLegend()+
+  xlab("") +
+  ylab("") 
+ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_ICG2_PENCILpredLabel_",sampleType_name,".pdf"),  width = 14, height = 8)
+
+```
+
+
+# Identify and plot marker genes for N/NR cells
+```{r}
+
+logFCfilter = 0.5
+adjPvalFilter = 0.05
+
+##### find all markers for PENCIL predicted labels
+Idents(object = merged_seu) <- merged_seu@meta.data$'PENCIL_pred_label'
+Cells.markers = FindAllMarkers(merged_seu, only.pos=TRUE, min.pct=0.25, logfc.threshold = logFCfilter)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+
+sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))) > logFCfilter & 
+                               as.numeric(as.vector(Cells.markers$p_val_adj)) < adjPvalFilter), ]
+
+write.csv(sig.markers, paste0(processed_dir, "sig.markers_PENCILpredLabel_",cellType_of_interest,'_',sampleType_name,".csv"))
+
+##### Keep only the top 10 genes for each PENCIL predicted label, ranked by logFC
+Top10.markers <- sig.markers %>%
+    group_by(cluster) %>%
+    top_n(10, avg_log2FC)
+
+DoHeatmap(merged_seu, features = Top10.markers$gene, group.by = "PENCIL_pred_label") + NoLegend()
+ggsave(filename = paste0(fig_dir, "Heatmap_",cellType_of_interest,'_Top10markers_',sampleType_name,".png"), height = 14, width = 14)
+
+p <- DotPlot(merged_seu, 
+             features = unique(Top10.markers$gene), 
+             group.by = "PENCIL_pred_label",
+             cols = c("lightgrey", "red")) + 
+  labs(x="", y="")+
+  #coord_flip()+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+ggsave(filename = paste0(fig_dir, "dotplot_",cellType_of_interest,'_Top10markers_',sampleType_name,".png"), plot = p, height = 160, width = 280, dpi = 800, units = "mm")
+
+
+```
+
+
+# Violin plot of marker gene scores for N/NR cells
+```{r}
+
+marker_sig = list(
+  R_cell_marker = Top10.markers$gene[1:10],
+  Rej_cell_marker = Top10.markers$gene[11:12],
+  NR_cell_marker = Top10.markers$gene[13:22]
+)
+
+if('NR_cell_marker' %in% colnames(merged_seu@meta.data)) {
+  # merged_seu@meta.data$CD4T = NULL
+  1
+} else {
+  merged_seu <- AddModuleScore_UCell(merged_seu, features=marker_sig, name=NULL)
+}
+
+# merged_seu$NRR <- merged_seu$R_cell_marker
+# merged_seu$R_cell_marker <- merged_seu$NR_cell_marker
+# merged_seu$NR_cell_marker <- merged_seu$NRR
+# merged_seu$NRR = NULL
+
+feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker")
+p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = feats, pt.size = 0, ncol = 3) +
+  NoLegend()
+ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_Top10.marker_PENCILpredLabel_",sampleType_name,".pdf"),  width = 8, height = 8)
+
+```
+
+# Use marker gene signature score to predict ICB response in 0.1) the same training data; 0.2) the same training data using blood-derived score; 1) bulk RNAseq; 2) other cancer types.
+```{r}
+
+merged_seu$meta <- factor(merged_seu$meta, levels = unique(df_ratios$meta0))
+
+feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker")
+p <- VlnPlot(merged_seu, group.by = "meta", features = feats, pt.size = 0, ncol = 1) +
+  NoLegend()
+ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_Top10.marker_patient_",sampleType_name,".pdf"),  width = 14, height = 8)
+
+
+```
+
