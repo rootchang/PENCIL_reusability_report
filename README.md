@@ -1,6 +1,17 @@
 # PENCIL_usage
 This is a reproducibility report of PENCIL (https://doi.org/10.1038/s42256-023-00656-y)
 
+This is an ongoing project. To do list:
+
+```
+1. UMAP of patients, R/NR binarized patient labels, PENCIL annotation (R/NR/Rej.)
+2. Marker gene analysis
+3. Enriched pathway analysis
+4. Use the learned biological information to predict on new datasets
+5. Please add more ...
+
+```
+
 
 ## 1. How to run PENCIL on Biowulf
 

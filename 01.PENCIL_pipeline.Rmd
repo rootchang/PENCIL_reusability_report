@@ -96,7 +96,7 @@ library(stringr)
 # set input and output directories & parameters
 ```{r}
 
-dataset = 'GSE120575' # 'GSE200996'   'GSE120575'   'GSE169246'
+dataset = 'GSE200996' # 'GSE200996'   'GSE120575'   'GSE169246'
 
 # local
 data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
@@ -298,8 +298,8 @@ saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rd
 library(SeuratData)
 library(SeuratDisk)
 
-phenotype_name = 'ResponseInfo' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
-cellType_of_interest = 'B' # 'CD8T'  'CD4T'  'B'
+phenotype_name = 'Any_response' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
+cellType_of_interest = 'CD8T' # 'CD8T'  'CD4T'  'B'
 
 if (cellType_of_interest == 'CD8T'){
   if (dataset == "GSE120575"){ # 'CD8T' cell annotation from the original paper
@@ -385,7 +385,7 @@ merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,'_',cellType_
 
 
 
-predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest_short,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
 colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
 
@@ -399,12 +399,26 @@ merged_seu <- AddMetaData(merged_seu, meta.new)
 # UMAP visualization of patient IDs, R/NR binarized patients, PENCIL predicted cell labels
 ```{r}
 
+DimPlot(merged_seu, group.by = "seurat_clusters")+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_seuratCluster.png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
+
+DimPlot(merged_seu, group.by = "patient")+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_patientID.png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
+DimPlot(merged_seu, group.by = "Any_response")+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_anyResponse.png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
 
 DimPlot(merged_seu, group.by = "PENCIL_pred_label")+
   ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_predicted_label.png"), height = 120, width = 190, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_PENCILpredLabel.png"), height = 120, width = 190, dpi = 800, units = "mm")
 
 
 ```
