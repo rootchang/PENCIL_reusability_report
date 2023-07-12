@@ -96,7 +96,7 @@ library(stringr)
 # set input and output directories & parameters
 ```{r}
 
-dataset = 'GSE169246' # 'GSE200996'   'GSE120575'   'GSE169246'
+dataset = 'GSE120575' # 'GSE200996'   'GSE120575'   'GSE169246'
 
 # local
 data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
@@ -107,7 +107,7 @@ fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
 data_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/", dataset, '/')
 processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
 fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
-
+PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts/results/")
 ```
 
 # Connect to server
@@ -148,11 +148,6 @@ merged_seu <- ScaleData(merged_seu) # pbmc <- SCTransform(pbmc, vars.to.regress 
 
 # Add phenotype info for GSE200996 (Luoma et al., HNSCC, ICB dataset)
 ```{r}
-#devtools::install_github("mojaveazure/seurat-disk")
-#devtools::install_github('satijalab/seurat-data')
-library(SeuratData)
-library(SeuratDisk)
-
 
 # Read in phenotype info.
 phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
@@ -179,11 +174,6 @@ saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rd
 
 # Add phenotype info for GSE169246 (Zeming Zhang, TNBC, ICB dataset)
 ```{r}
-#devtools::install_github("mojaveazure/seurat-disk")
-#devtools::install_github('satijalab/seurat-data')
-library(SeuratData)
-library(SeuratDisk)
-
 
 # Read in phenotype info.
 phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
@@ -203,16 +193,12 @@ merged_seu <- AddMetaData(merged_seu, meta.new)
 
 saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
 
-
-
 ```
 
 # load raw expression and phenotype data and construct seurat object for GSE120575 (Sade-Feldman et al., melanoma, ICB dataset)
 ```{r}
 
 library(readr)
-
-sampleType_name = 'Tissue'
 
 # read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
 data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
@@ -299,49 +285,72 @@ DimPlot(merged_seu, group.by = "highlighted.clusters", label = TRUE, repel = TRU
   ggtitle("")
 ggsave(filename = paste0(fig_dir, "UMAP_cellTypeSelf_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
 
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
+
 ```
 
 
 # subset seurat to focus on cell types of interest (e.g. CD8T, CD4T, B, ...)
 ```{r}
-############## CD8T cells
-if (dataset == "GSE120575"){
-  merged_seu_CD8Tcell <- subset(merged_seu, subset = cell_type_original %in% c("CD8+ T-cells"))
-  # save to .h5ad for PENCIL to read
-  SaveH5Seurat(merged_seu_CD8Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), overwrite = TRUE)
-  Convert(paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes log1p data.
-  # saveRDS(object = merged_seu_CD8Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.rds")) 
-}else{
-  merged_seu_CD8Tcell <- subset(merged_seu, subset = cell_type %in% c("CD8+ T-cells"))
-  # save to .h5ad for PENCIL to read
-  SaveH5Seurat(merged_seu_CD8Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), overwrite = TRUE)
-  Convert(paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes log1p data.
-  # saveRDS(object = merged_seu_CD8Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD8Tcell.rds")) 
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+phenotype_name = 'ResponseInfo' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
+cellType_of_interest = 'B' # 'CD8T'  'CD4T'  'B'
+
+if (cellType_of_interest == 'CD8T'){
+  if (dataset == "GSE120575"){ # 'CD8T' cell annotation from the original paper
+    merged_seu_subset <- subset(merged_seu, subset = cell_type_original %in% c("CD8+ T-cells"))
+  }else{
+    merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD8+ T-cells"))
+  }
+}else if (cellType_of_interest == 'CD4T'){
+  merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "Tregs"))
+}else if (cellType_of_interest == 'B'){
+  merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("Naive B-cells", "Memory B-cells", "Plasma cells"))
 }
+print(merged_seu_subset)
 
-############## CD4T cells
-merged_seu_CD4Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "Tregs"))
+# Normalize the data
+merged_seu_subset <- NormalizeData(merged_seu_subset) # log(x/sum(x)*10000+1)
+
+# Find highly variable genes
+merged_seu_subset <- FindVariableFeatures(merged_seu_subset)
+
+#Calculate Cell Cycle Score (S-G2M Difference)
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+merged_seu_subset<- CellCycleScoring(merged_seu_subset, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+merged_seu_subset$CC.Difference <- merged_seu_subset$S.Score - merged_seu_subset$G2M.Score
+
+# Calculate mitochondrial gene percentage
+merged_seu_subset$percent.mt <- PercentageFeatureSet(merged_seu_subset, pattern = "^MT-")
+
+# Calculate ribosomal gene percentage
+merged_seu_subset$percent.ribo <- PercentageFeatureSet(merged_seu_subset, pattern = "^RP[SL]")
+
+# Scale the data
+merged_seu_subset <- ScaleData(merged_seu_subset)
+
+# Perform PCA
+merged_seu_subset <- RunPCA(merged_seu_subset, pc.genes = merged_seu_subset@var.genes)
+
+# Perform UMAP
+merged_seu_subset <- RunUMAP(merged_seu_subset, reduction = "pca", dims = 1:30)
+
+# Find neighbors
+merged_seu_subset <- FindNeighbors(merged_seu_subset, reduction = "pca", dims = 1:30)
+
+# Find clusters
+merged_seu_subset <- FindClusters(merged_seu_subset, resolution = 0.5)
+
 # save to .h5ad for PENCIL to read
-SaveH5Seurat(merged_seu_CD4Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.h5Seurat"), overwrite = TRUE)
-Convert(paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-# saveRDS(object = merged_seu_CD4Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_CD4Tcell.rds")) 
-
-
-
-############## T cells
-merged_seu_Tcell <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "CD8+ T-cells", "Tregs"))
-# save to .h5ad for PENCIL to read
-SaveH5Seurat(merged_seu_Tcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), overwrite = TRUE)
-Convert(paste0(data_dir, "seu_",sampleType_name,"_Tcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-#saveRDS(object = merged_seu_Tcell, file = paste0(data_dir, "seu_",sampleType_name,"_Tcell.rds")) 
-
-
-############## B cells
-merged_seu_Bcell <- subset(merged_seu, subset = cell_type %in% c("Naive B-cells", "Memory B-cells", "Plasma cells"))
-# save to .h5ad for PENCIL to read
-SaveH5Seurat(merged_seu_Bcell, filename = paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), overwrite = TRUE)
-Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # Seems that only HVGs are saved to file. Other genes are left out.
-#saveRDS(object = merged_seu_Bcell, file = paste0(data_dir, "seu_",sampleType_name,"_Bcell.rds")) 
+SaveH5Seurat(merged_seu_subset, filename = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".h5Seurat"), overwrite = TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes 
+saveRDS(object = merged_seu_subset, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".rds")) 
 
 
 #print(unique(merged_seu$patient))
@@ -349,34 +358,55 @@ Convert(paste0(data_dir, "seu_",sampleType_name,"_Bcell.h5Seurat"), dest = "h5ad
 #print(merged_seu$Any_response[1:10])
 #print(unique(merged_seu$timePt))
 #print(dim(merged_seu))
+
 ```
 
 
 # Run PENCIL
-```{r}
+```{bash}
+
+cd /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts
+
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_Tissue_CD8Tcell.h5ad Any_response GSE200996_CD8T multi-classification 1 0
+
 
 ```
 
 
 
 
-# Analyze PENCIL identified phenotypic cells for tumor samples
+# Add PENCIL identified phenotypic cell labels 
 ```{r}
 
-predicted_cell_labels = read.csv("/data/Lab_ruppin/tiangen/CancerProject/05.scRNAseq_project/03.Results/PENCIL/GSE200996/py/Volumetric_response/predicted_labels.csv") # Blood_Volumetric_response   Volumetric_response
+
+
+# load seurat object
+merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,".rds"))
+
+
+
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest_short,"/py/", phenotype_name, "/predicted_labels.csv"))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-meta <- tumor_CD45_cells@meta.data
-meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order. So here we directly cbind two data frames to add the predicted label information for all cells.
-tumor_CD45_cells <- AddMetaData(tumor_CD45_cells, meta.new)
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+
+meta <- merged_seu@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu <- AddMetaData(merged_seu, meta.new)
+#merged_seu@meta.data$predicted_label = NULL
 
 ```
 
-# Plot predicted labels to confirm 
+# UMAP visualization of patient IDs, R/NR binarized patients, PENCIL predicted cell labels
 ```{r}
-DimPlot(tumor_CD45_cells, group.by = "predicted_label")+
-  # scale_color_manual(values = my.cols)+
+
+
+
+
+DimPlot(merged_seu, group.by = "PENCIL_pred_label")+
   ggtitle("")
 ggsave(filename = paste0(fig_dir, "UMAP_predicted_label.png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
 ```
 
 # Calculate R/NR cell number and ratios in each patient

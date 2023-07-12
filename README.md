@@ -45,21 +45,46 @@ Table 1. Explanation for the parameters used by `02.Run_PENCIL.py`.
 
 (2.2) I have prepared .h5ad files as input for PENCIL for all the datasets. The location of these datasets is `/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input`.
 
-(2.2.1) To run PENCIL for the GSE120575 melanoma dataset using CD8T cells that presented in the original PENCIL paper, run the following code:
+(2.2.1) To run PENCIL for the GSE120575 melanoma dataset using tissue CD8T/CD4T/B cells that presented in the original PENCIL paper, run the following code:
 
 ```{bash}
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8Tcell.h5ad ResponseInfo GSE120575_CD8T multi-classification 1 0
+# tissue CD8T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_CD8T multi-classification 1 0
+
+# tissue CD4T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD4T.h5ad ResponseInfo GSE120575_CD4T multi-classification 1 0
+
+# tissue B cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_B.h5ad ResponseInfo GSE120575_B multi-classification 1 0
+
 ```
 
 
-(2.2.2) To run PENCIL for the GSE200996 HNSCC dataset using tissue CD8T cells, run the following code:
+(2.2.2) To run PENCIL for the GSE200996 HNSCC dataset using tissue/PBMC CD8T/CD4T/B cells, run the following code:
 
 ```{bash}
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_Tissue_CD8Tcell.h5ad ResponseInfo GSE200996_Tissue_CD8T multi-classification 1 0
+# tissue CD8T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_Tissue_CD8T.h5ad Any_response GSE200996_Tissue_CD8T multi-classification 1 0
+
+# tissue CD4T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_Tissue_CD4T.h5ad Any_response GSE200996_Tissue_CD4T multi-classification 1 0
+
+# tissue B cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_Tissue_B.h5ad Any_response GSE200996_Tissue_B multi-classification 1 0
+
+# PBMC CD8T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_PBMC_CD8T.h5ad Any_response GSE200996_PBMC_CD8T multi-classification 1 0
+
+# PBMC CD4T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_PBMC_CD4T.h5ad Any_response GSE200996_PBMC_CD4T multi-classification 1 0
+
+# PBMC B cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_PBMC_B.h5ad Any_response GSE200996_PBMC_B multi-classification 1 0
+
 ```
 
 (2.2.3) To run PENCIL for the GSE200996 HNSCC dataset using PBMC CD8T cells, run the following code:
 
 ```{bash}
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_PBMC_CD8Tcell.h5ad ResponseInfo GSE200996_PBMC_CD8T multi-classification 1 0
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE200996/seu_PBMC_CD8T.h5ad Any_response GSE200996_PBMC_CD8T multi-classification 1 0
 ```
