@@ -1,24 +1,3 @@
----
-title: "Pre-process the data for PENCIL input"
-author: "Tiangen Chang tiangen.chang@nih.gov"
-output: 
-  rmarkdown::html_vignette:
-    toc: true
-    toc_depth: 2
-vignette: >
-  %\VignetteIndexEntry{}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
----
-
-
-```{r}
-# clear all objects including hidden objects
-rm(list = ls(all.names = TRUE)) 
-# free up memory and report the memory usage
-gc()
-```
-
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = FALSE,
@@ -28,45 +7,6 @@ knitr::opts_chunk$set(echo = FALSE,
 require(ggplot2)
 ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
 ```
-
-
-
-# Data description:
-
-1. GSE200996
-
-Original paper: Luoma, Adrienne M., et al. "Tissue-resident memory and circulating T cells are early responders to pre-surgical cancer immunotherapy." Cell 185.16 (2022): 2918-2935. https://doi.org/10.1016/j.cell.2022.06.018
-
-Data type: matched tumor and blood, scRNA-seq, scTCR-seq, bulk TCR; Samples: from 30 patients from 2 different cohorts (anti-PD-1 monotherapy, anti-PD-1+anti-CTLA-4 combination therapy)
-
-
-# Data input:
-
-Data matrix downloaded from GEO
-
-# Sample description (no healthy donors)
-
-Blood B1 (pre): P01, P02, P04, P05, P08, P09, P10, P12, P13, P14, P15, P16, P17, P18, P19, P20, P21, P22, P23, P24, P25, P26, P28, P29, P30, P31, P32
-
-Blood B2 (post): P01, P02, P04, P05, P08, P09, P10, P12, P13, P14, P15, P16, P17, P19, P20, P22, P23, P24, P26, P28, P29, P30, P31, P32
-
-Blood B3 (follow-up): P01, P02, P04, P05, P09, P10, P12, P13, P14, P15, P17, P19, P20, P21, P22, P23, P25, P32
-
-Tumor pre: P18, P23, P24, P29, P32, [P27 (do not have blood match)]
-
-Tumor post: P13, P14, P15, P16, P18, P19, P20, P21, P22, P23, P24, P25, P26, P27, P28, P29, P30, P31, P32
-
-
-
-# Aims:
-
-- integrate all patients' data object
-
-- analysis the integrated data
-
-- annotate the data with celltypist
-
-- save the integrated seurat object
 
 # Connect to server
 ```{bash}
@@ -107,13 +47,7 @@ library(stringr)
 # set input and output directories & parameters
 ```{r}
 
-dataset = 'GSE120575' # 'GSE200996'   'GSE120575'   'GSE169246'
-
-# local
-data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
-processed_dir <- paste0("../03.Results/", dataset, '/')
-fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
-
+dataset = 'GSE120575' 
 # server
 data_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/", dataset, '/')
 processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
@@ -123,69 +57,16 @@ PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.
 
 
 
-# load seurat object
-```{r}
-
-sampleType_name = 'Tissue' # 'PBMC'  'Tissue'
-
-merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,".rds"))
-
-```
-
-
-# Add phenotype info for GSE200996 (Luoma et al., HNSCC, ICB dataset)
-```{r}
-
-# Read in phenotype info.
-phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
-phenotype_df = phenotype_df[,c(1,7,9,10,15:26)]
-colnames(phenotype_df) = c(colnames(phenotype_df)[1:4],'Downstaging','RECIST_response','Volumetric_response','Viable_Tumor', 'Pathological_response', 'Pathological_response_binned', 'Max_response', 'Any_response', 'OS_days', 'PFS_days', 'PFS_event', 'OS_event')
-
-# Add phenotype info to seurat object
-meta <- merged_seu@meta.data
-meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
-meta.new <- merge(meta, phenotype_df, by.x = "patient", by.y = "patient_id")
-rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
-merged_seu <- AddMetaData(merged_seu, meta.new)
-#cell.names <- sapply(seq_along(rownames(merged_seu@meta.data)), function(i) paste0("cell_", i), USE.NAMES = F)
-#merged_seu@meta.data$cellID <- cell.names # rename cells to cell_1, cell_2, ...
-#merged_seu <- RenameCells(object = merged_seu, new.names = merged_seu@meta.data$cellID)
-#print(merged_seu$cellID[1:10])
-
-saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
-
-
-
-```
-
-
-# Add phenotype info for GSE169246 (Zeming Zhang, TNBC, ICB dataset)
-```{r}
-
-# Read in phenotype info.
-phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
-phenotype_df = phenotype_df[,c(1,7,9,10,15:26)]
-colnames(phenotype_df) = c(colnames(phenotype_df)[1:4],'Downstaging','RECIST_response','Volumetric_response','Viable_Tumor', 'Pathological_response', 'Pathological_response_binned', 'Max_response', 'Any_response', 'OS_days', 'PFS_days', 'PFS_event', 'OS_event')
-
-# Add phenotype info to seurat object
-meta <- merged_seu@meta.data
-meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
-meta.new <- merge(meta, phenotype_df, by.x = "patient", by.y = "patient_id")
-rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
-merged_seu <- AddMetaData(merged_seu, meta.new)
-#cell.names <- sapply(seq_along(rownames(merged_seu@meta.data)), function(i) paste0("cell_", i), USE.NAMES = F)
-#merged_seu@meta.data$cellID <- cell.names # rename cells to cell_1, cell_2, ...
-#merged_seu <- RenameCells(object = merged_seu, new.names = merged_seu@meta.data$cellID)
-#print(merged_seu$cellID[1:10])
-
-saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
-
-```
-
 # load raw expression and phenotype data and construct seurat object for GSE120575 (Sade-Feldman et al., melanoma, ICB dataset)
 ```{r}
 
+library(SeuratData)
+library(SeuratDisk)
+
 library(readr)
+
+phenotype_name = 'ResponseInfo' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
+cellType_of_interest = 'CD8T' # 'CD8T'  'CD4T'  'B'
 
 # read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
 data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
@@ -207,20 +88,8 @@ patient_df$cellID = rownames(patient_df)
 data <- data[-1,] # remove patientID row
 
 
-
 # Create a Seurat object
 seurat_obj <- CreateSeuratObject(counts = data)
-# Assign the normalized counts to seurat_obj[["RNA"]]@data
-seurat_obj[["RNA"]]@data <- as.matrix(seurat_obj[["RNA"]]@counts)
-# convert from log2(TPM+1) --> TPM
-seurat_obj[["RNA"]]@data <- 2^seurat_obj[["RNA"]]@data-1 
-# Create a new Seurat object with the TPM as counts
-seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data)
-seurat_obj = seurat_obj_new
-
-# Assign project name
-seurat_obj$project <- "GSE120575_Sade_Feldman_melanoma"
-
 # add phenotype info
 phenotype_df_raw <- read.table(paste0(data_dir,"GSE120575_singleCells_metaInfo_clean.txt"), sep = "\t", quote = "", header = TRUE, stringsAsFactors = FALSE)
 phenotype_df = phenotype_df_raw[,c(5,6,7)] # "CellID" "PatientID" "ResponseInfo" "DrugType"  
@@ -231,13 +100,6 @@ phenotype_df <- phenotype_df[!duplicated_rows, ]
 phenotype_df.new <- merge(patient_df, phenotype_df, by.x = "patient", by.y = "patient")
 rownames(phenotype_df.new) <- phenotype_df.new$cellID
 
-
-# Add phenotype info to seurat object
-# seurat_obj@meta.data$cellID <- NULL
-# seurat_obj@meta.data$patient <- NULL
-# seurat_obj@meta.data$ResponseInfo <- NULL
-# seurat_obj@meta.data$DrugType <- NULL
-
 meta <- seurat_obj@meta.data
 meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
 meta.new <- merge(meta, phenotype_df.new, by.x = "cell_names", by.y = "cellID")
@@ -245,22 +107,65 @@ rownames(meta.new) <- meta.new$cell_names # retrieve rownames
 meta.new <- meta.new[, !(names(meta.new) %in% c("cellID", "cell_names"))]
 seurat_obj <- AddMetaData(seurat_obj, meta.new)
 
-
-#################################################################################
-############# Cell annotation using 20.Cell_Annotation.Rmd pipeline #############
-#################################################################################
-
 ##### Re-do CD8T cell annotation using original annotation by Sade-Feldman et al. 2018 Cell 
-
 CD8T_cellID = read.csv(file = paste0(data_dir,"CD8T_original_cellAnno.csv"))
-
 CD8T_cellID$Cell.Name <- gsub("-", ".", CD8T_cellID$Cell.Name)
+seurat_obj@meta.data$cell_type_original <- "Other"
+seurat_obj@meta.data$cell_type_original[rownames(seurat_obj@meta.data) %in% CD8T_cellID$Cell.Name] <- "CD8+ T-cells"
 
-merged_seu@meta.data$cell_type_original <- "Other"
+merged_seu_subset <- subset(seurat_obj, subset = cell_type_original %in% c("CD8+ T-cells"))
 
-merged_seu@meta.data$cell_type_original[rownames(merged_seu@meta.data) %in% CD8T_cellID$Cell.Name] <- "CD8+ T-cells"
 
-saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rds")) 
+# filter genes to only focus on protein coding genes
+protein_coding_gene_file = paste0(data_dir,'/gene_with_protein_product.txt')
+protein_coding_genes=read.delim(protein_coding_gene_file, header=F,colClasses = "character")[,2]
+genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
+merged_seu_subset <- merged_seu_subset[genes, ]
+
+merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(object=merged_seu_subset)
+#
+merged_seu_subset <- RunPCA(object=merged_seu_subset, features=VariableFeatures(merged_seu_subset))
+merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
+merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
+merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
+
+
+
+
+
+#plot umap
+DimPlot(object=merged_seu_subset, reduction='umap', label=F, group.by='ResponseInfo', pt.size = 1)
+ggsave(paste0(fig_dir, 'raw.umap.ResponseInfo.pdf'), width = 7, height = 7)
+DimPlot(object=merged_seu_subset, reduction='umap', label=F, pt.size=1)
+ggsave(paste0(fig_dir, 'raw.umap.clusters.pdf'), width = 7, height = 7)
+
+
+exp_data = merged_seu_subset@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu_subset),]
+
+
+SaveH5Seurat(merged_seu_subset, filename = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL_wrong.h5Seurat"), 
+             overwrite = TRUE,keep.order=TRUE)
+Convert(paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL_wrong.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes 
+saveRDS(object = merged_seu_subset, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest,"_PENCIL_wrong.rds")) 
+
+
+merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_PENCIL_wrong.rds"))
+
+exp_data_scaled = merged_seu@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu),]
+
+exp_data_unscaled = merged_seu@assays[["RNA"]]@data[VariableFeatures(merged_seu),]
+
+#write.csv(exp_data, file=paste(filepath, 'exp_data_mvg2000(PCG).csv', sep = ''))
+
+write.csv(exp_data_unscaled, file=paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_PENCIL_wrong.csv"))
+
+cell_label_df = data.frame(label = merged_seu$ResponseInfo)
+write.csv(cell_label_df, file=paste0(data_dir,"cell_label_info.csv"))
+
+emd = merged_seu@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(data_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
 
 ```
 
@@ -293,7 +198,7 @@ print(merged_seu_subset)
 protein_coding_gene_file = paste0(data_dir,'/gene_with_protein_product.txt')
 protein_coding_genes=read.delim(protein_coding_gene_file, header=F,colClasses = "character")[,2]
 genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
-pbmc <- pbmc[genes, ]
+seurat_obj <- seurat_obj[genes, ]
 
 # Normalize the data
 merged_seu_subset <- NormalizeData(merged_seu_subset) # log(x/sum(x)*10000+1)
