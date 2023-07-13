@@ -71,6 +71,19 @@ python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Inpu
 
 ```
 
+To run PENCIL on the wrongly processed GSE120575 melanoma dataset by the PENCIL authors, using the following code:
+
+```
+
+# tissue CD8T cells
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T_PENCIL_wrong.h5ad ResponseInfo GSE120575_Tissue_CD8T_PENCIL_wrong multi-classification 1 0
+
+# OR
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/exp_data_mvg2000_unscale.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/embedding-umap.csv GSE120575_Tissue_CD8T ResponseInfo multi-classification
+
+```
+
+
 
 (2.2.2) To run PENCIL for the GSE200996 HNSCC dataset using tissue/PBMC CD8T/CD4T/B cells, run the following code:
 
