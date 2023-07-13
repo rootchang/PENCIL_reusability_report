@@ -9,7 +9,7 @@ This is an ongoing project. To do list:
 3. Enriched pathway analysis
 4. Known signature enrichment (e.g. CD8T exh., cyt., TRM., ...)
 4. Use the learned biological information to predict on new datasets
-5. Please add more ...
+5. Benchmark PENCIL with other relevant tools
 
 ```
 
