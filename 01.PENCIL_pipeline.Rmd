@@ -458,7 +458,12 @@ DimPlot(merged_seu, group.by = "seurat_clusters")+
   ggtitle("")
 ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_seuratCluster_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
+DimPlot(merged_seu, group.by = "cell_type", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_cell_type_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
+
+DimPlot(merged_seu, group.by = "seurat_clusters", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
 
 DimPlot(merged_seu, group.by = "meta")+
   ggtitle("")
