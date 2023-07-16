@@ -303,17 +303,46 @@ if (1){ #### use original cell type or multi-method manually labeled cell types
   }else if (cellType_of_interest == 'B'){
     merged_seu_subset <- subset(merged_seu, subset = celltypist.IAL %in% c("Naive B-cells", "Memory B-cells", "Plasma cells", "Other B-cells"))
   }
-}else if (0){ # use singler HPCA annotated cell types
+}else if (0){ # use self annotated CD8T cells based on marker gene expression (NCR1_all+NCAM1_all+FOXP3_all==0) & (CD8A_all+CD8B_all)*(CD3D_all+CD3E_all+CD3G_all)*CD45_all
   if (cellType_of_interest == 'CD8T'){
-    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("CD8+ T-cells"))
-  }else if (cellType_of_interest == 'CD4T'){
-    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("CD4+ T-cells", "Tregs"))
-  }else if (cellType_of_interest == 'B'){
-    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("Naive B-cells", "Memory B-cells", "Plasma cells", "Other B-cells"))
+    merged_seu_subset <- subset(merged_seu, subset = CD8T_self %in% c("CD8+ T-cells"))
   }
 }
 
-merged_seu_subset = merged_seu
+#################### save cell names of self annotated CD8T to a csv file to send to PENCIL authors for further check
+# Get the column names
+cell_names <- colnames(merged_seu_subset)
+# Create a data frame with the column names
+cell_names_df <- data.frame(Cell_name = cell_names)
+# Save the data frame to a CSV file
+write.csv(cell_names_df, file = paste0(data_dir,"GSE120575_customAnnot_CD8T.csv"), row.names = FALSE)
+
+cell_names_df <- data.frame(Cell_name = CD8T_original)
+# Save the data frame to a CSV file
+write.csv(cell_names_df, file = paste0(data_dir,"GSE120575_FeldmanAnnot_CD8T.csv"), row.names = FALSE)
+
+cell_names_df <- data.frame(Cell_name = intersect(CD8T_self,CD8T_original))
+# Save the data frame to a CSV file
+write.csv(cell_names_df, file = paste0(data_dir,"GSE120575_common_CD8T.csv"), row.names = FALSE)
+
+
+#merged_seu_subset = merged_seu
+
+################################################################################################################################################################
+#################### randomly add or substract 500 cells to merged_seu_subset
+set.seed(123)  # Set seed for reproducibility
+n_perturb <- 500  # Number of values to randomly set to "CD8+ T-cells"
+merged_seu$cell_type_original_perturb <- merged_seu$cell_type_original
+other_indices <- which(merged_seu$cell_type_original == "Other")
+perturb_indices <- sample(other_indices, n_perturb)
+merged_seu$cell_type_original_perturb[perturb_indices] <- "CD8+ T-cells"
+
+
+
+
+
+################################################################################################################################################################
+
 
 # filter genes to only focus on protein coding genes (Safe-Feldman paper list)
 protein_coding_genes=read.csv(file = paste0(shared_data_dir,"Feldman_protein_coding_genes.csv"), header=T,colClasses = "character")[,1]
@@ -392,11 +421,17 @@ DimPlot(merged_seu, group.by = "cell_type_original", label = TRUE, repel = TRUE,
   ggtitle("")
 ggsave(filename = paste0(fig_dir, "UMAP_cellTypeOriginalPaper_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
 
-# Plot cell_type CD8T clusters
-merged_seu$highlighted.clusters <- ifelse(merged_seu$cell_type %in% c("CD8+ T-cells"), as.character(merged_seu$cell_type), "Other")
+# Plot celltypist.IAL CD8T clusters
+merged_seu$highlighted.clusters <- ifelse(merged_seu$celltypist.IAL %in% c("CD8+ T-cells"), as.character(merged_seu$celltypist.IAL), "Other")
 DimPlot(merged_seu, group.by = "highlighted.clusters", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
   ggtitle("")
-ggsave(filename = paste0(fig_dir, "UMAP_cellTypeSelf_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "UMAP_cellTypeCelltypistHighConf_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+
+# Plot self annotated CD8T cells based on marker genes
+DimPlot(merged_seu, group.by = "CD8T_self", label = TRUE, repel = TRUE, raster=FALSE)+NoLegend()+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_cellTypeSelfAnno_CD8T_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+
 ```
 
 
