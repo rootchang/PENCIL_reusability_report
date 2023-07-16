@@ -13,6 +13,7 @@ import warnings
 warnings.filterwarnings('ignore') #to ignore warnings on the output.
 import time
 from scipy.sparse import issparse
+from collections import Counter
 
 start_time  = time.time()
 exp_fn = sys.argv[1] # '../02.Input/GSE200996/seu_Tissue_CD8T_PENCIL_wrong.csv'
@@ -38,13 +39,15 @@ if mode == 'multi-classification':
 else:
     labels = np.array(labels_raw.values, dtype=float)
 
-class_weights = [2.0, 1.0] # [2.0, 1.0] # None
-print('data.shape: ', data.shape)
-print(data[0:5,0:5])
-print('class_labels: ', labels)
-print('class_names: ', class_names)
-print('labels.shape: ', labels.shape)
+class_weights = [1.0, 2.0] # [1.0, 2.0] # None
+
+print('Expression data (first 5*5):\n', data[0:5,0:5])
+if mode == 'multi-classification':
+    print('class_names: ', class_names)
+print('Unique labels and occurrence: ', sorted(list(Counter(labels).items()))) # sorted(list(Counter(labels).items()))
 print('class_weights: ', class_weights)
+print('labels.shape: ', labels.shape)
+
 
 print('************** Step 2: running PENCIL ...')
 if mode == 'multi-classification':

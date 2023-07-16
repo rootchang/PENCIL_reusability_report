@@ -61,7 +61,7 @@ Table 1. Explanation for the parameters used by `02.Run_PENCIL.py`.
 
 ```{bash}
 # tissue CD8T cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_Tissue_CD8T multi-classification 1 0
+python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_Tissue_CD8T multi-classification 1 1 0
 
 # tissue CD4T cells
 python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD4T.h5ad ResponseInfo GSE120575_Tissue_CD4T multi-classification 1 0
@@ -79,8 +79,14 @@ To run PENCIL on the wrongly processed GSE120575 melanoma dataset by the PENCIL 
 python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T_PENCIL_wrong.h5ad ResponseInfo GSE120575_Tissue_CD8T_PENCIL_wrong multi-classification 1 0
 
 # OR
-python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/exp_data_mvg2000_unscale.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/embedding-umap.csv GSE120575_Tissue_CD8T ResponseInfo multi-classification
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ResponseInfo multi-classification
 
+exp_data_mvg2000.csv
+exp_data_mvg2000_unscale.csv
+exp_data_mvg2000_log2TPM.csv
+
+exp_data_mvg2000_log2TPM_self.csv
+exp_data_mvg2000_scale_self.csv
 ```
 
 

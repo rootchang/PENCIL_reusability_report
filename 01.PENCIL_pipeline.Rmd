@@ -115,7 +115,8 @@ processed_dir <- paste0("../03.Results/", dataset, '/')
 fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
 
 # server
-data_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/", dataset, '/')
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+data_dir <- paste0(shared_data_dir, dataset, '/')
 processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
 fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
 PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts/results/")
@@ -209,17 +210,17 @@ data <- data[-1,] # remove patientID row
 
 
 # Create a Seurat object
-seurat_obj <- CreateSeuratObject(counts = data)
-# Assign the normalized counts to seurat_obj[["RNA"]]@data
-seurat_obj[["RNA"]]@data <- as.matrix(seurat_obj[["RNA"]]@counts)
+merged_seu <- CreateSeuratObject(counts = data)
+# Assign the normalized counts to merged_seu[["RNA"]]@data
+merged_seu[["RNA"]]@data <- as.matrix(merged_seu[["RNA"]]@counts)
 # convert from log2(TPM+1) --> TPM
-seurat_obj[["RNA"]]@data <- 2^seurat_obj[["RNA"]]@data-1 
+merged_seu[["RNA"]]@data <- 2^merged_seu[["RNA"]]@data-1 
 # Create a new Seurat object with the TPM as counts
-seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data)
-seurat_obj = seurat_obj_new
+merged_seu_new <- CreateSeuratObject(counts = merged_seu[["RNA"]]@data)
+merged_seu = merged_seu_new
 
 # Assign project name
-seurat_obj$project <- "GSE120575_Sade_Feldman_melanoma"
+merged_seu$project <- "GSE120575_Sade_Feldman_melanoma"
 
 # add phenotype info
 phenotype_df_raw <- read.table(paste0(data_dir,"GSE120575_singleCells_metaInfo_clean.txt"), sep = "\t", quote = "", header = TRUE, stringsAsFactors = FALSE)
@@ -233,24 +234,29 @@ rownames(phenotype_df.new) <- phenotype_df.new$cellID
 
 
 # Add phenotype info to seurat object
-# seurat_obj@meta.data$cellID <- NULL
-# seurat_obj@meta.data$patient <- NULL
-# seurat_obj@meta.data$ResponseInfo <- NULL
-# seurat_obj@meta.data$DrugType <- NULL
+# merged_seu@meta.data$timePt <- NULL
+# merged_seu@meta.data$patient <- NULL
+# merged_seu@meta.data$meta <- NULL
+# merged_seu@meta.data$ResponseInfo <- NULL
+# merged_seu@meta.data$DrugType <- NULL
 
-meta <- seurat_obj@meta.data
+meta <- merged_seu@meta.data
 meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
 meta.new <- merge(meta, phenotype_df.new, by.x = "cell_names", by.y = "cellID")
 rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
 meta.new <- meta.new[, !(names(meta.new) %in% c("cellID", "cell_names"))]
-seurat_obj <- AddMetaData(seurat_obj, meta.new)
+merged_seu <- AddMetaData(merged_seu, meta.new)
+
+merged_seu$meta = merged_seu$patient
+merged_seu$timePt <- ifelse(grepl("^Pre_", merged_seu$meta), "pre", "post")
+merged_seu$patient <- gsub("^Pre_|^Post_", "", merged_seu$meta)
 
 
 #################################################################################
 ############# Cell annotation using 20.Cell_Annotation.Rmd pipeline #############
 #################################################################################
 
-##### Re-do CD8T cell annotation using original annotation by Sade-Feldman et al. 2018 Cell 
+##### Optional: Re-do CD8T cell annotation using original annotation by Sade-Feldman et al. 2018 Cell 
 
 CD8T_cellID = read.csv(file = paste0(data_dir,"CD8T_original_cellAnno.csv"))
 
@@ -273,33 +279,53 @@ saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,".rd
 library(SeuratData)
 library(SeuratDisk)
 
-phenotype_name = 'Any_response' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
+phenotype_name = 'ResponseInfo' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
 cellType_of_interest = 'CD8T' # 'CD8T'  'CD4T'  'B'
 
-if (cellType_of_interest == 'CD8T'){
-  if (dataset == "GSE120575"){ # 'CD8T' cell annotation from the original paper
-    merged_seu_subset <- subset(merged_seu, subset = cell_type_original %in% c("CD8+ T-cells"))
-  }else{
-    merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD8+ T-cells"))
+
+if (1){ #### use original cell type or multi-method manually labeled cell types
+  if (cellType_of_interest == 'CD8T'){
+    if (dataset == "GSE120575"){ # 'CD8T' cell annotation from the original paper
+      merged_seu_subset <- subset(merged_seu, subset = cell_type_original %in% c("CD8+ T-cells"))
+    }else{
+      merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD8+ T-cells"))
+    }
+  }else if (cellType_of_interest == 'CD4T'){
+    merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "Tregs"))
+  }else if (cellType_of_interest == 'B'){
+    merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("Naive B-cells", "Memory B-cells", "Plasma cells"))
   }
-}else if (cellType_of_interest == 'CD4T'){
-  merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("CD4+ T-cells", "Tregs"))
-}else if (cellType_of_interest == 'B'){
-  merged_seu_subset <- subset(merged_seu, subset = cell_type %in% c("Naive B-cells", "Memory B-cells", "Plasma cells"))
+}else if (0){ # use celltypist annotated cell types
+  if (cellType_of_interest == 'CD8T'){
+    merged_seu_subset <- subset(merged_seu, subset = celltypist.IAL %in% c("CD8+ T-cells"))
+  }else if (cellType_of_interest == 'CD4T'){
+    merged_seu_subset <- subset(merged_seu, subset = celltypist.IAL %in% c("CD4+ T-cells", "Tregs"))
+  }else if (cellType_of_interest == 'B'){
+    merged_seu_subset <- subset(merged_seu, subset = celltypist.IAL %in% c("Naive B-cells", "Memory B-cells", "Plasma cells", "Other B-cells"))
+  }
+}else if (0){ # use singler HPCA annotated cell types
+  if (cellType_of_interest == 'CD8T'){
+    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("CD8+ T-cells"))
+  }else if (cellType_of_interest == 'CD4T'){
+    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("CD4+ T-cells", "Tregs"))
+  }else if (cellType_of_interest == 'B'){
+    merged_seu_subset <- subset(merged_seu, subset = HPCA.fine %in% c("Naive B-cells", "Memory B-cells", "Plasma cells", "Other B-cells"))
+  }
 }
+
+merged_seu_subset = merged_seu
+
+# filter genes to only focus on protein coding genes (Safe-Feldman paper list)
+protein_coding_genes=read.csv(file = paste0(shared_data_dir,"Feldman_protein_coding_genes.csv"), header=T,colClasses = "character")[,1]
+genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
+merged_seu_subset <- merged_seu_subset[genes, ]
+
 print(merged_seu_subset)
 
-# filter genes to only focus on protein coding genes
-protein_coding_gene_file = paste0(data_dir,'/gene_with_protein_product.txt')
-protein_coding_genes=read.delim(protein_coding_gene_file, header=F,colClasses = "character")[,2]
-genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
-pbmc <- pbmc[genes, ]
 
-# Normalize the data
-merged_seu_subset <- NormalizeData(merged_seu_subset) # log(x/sum(x)*10000+1)
-
-# Find highly variable genes
-merged_seu_subset <- FindVariableFeatures(merged_seu_subset)
+## raw data is already log2TPM+1, do not need to normalize any more
+# merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
 
 #Calculate Cell Cycle Score (S-G2M Difference)
 s.genes <- cc.genes$s.genes
@@ -319,20 +345,36 @@ merged_seu_subset <- ScaleData(merged_seu_subset)
 # Perform PCA
 merged_seu_subset <- RunPCA(merged_seu_subset, pc.genes = merged_seu_subset@var.genes)
 
+# Identify the elbow point
+#elbow_plot <- ElbowPlot(merged_seu_subset, ndims = 50)  # Adjust 'ndims' as needed
+#plot(elbow_plot)
+#elbow_point <- IdentifyElbow(elbow_plot)
+
 # Perform UMAP
-merged_seu_subset <- RunUMAP(merged_seu_subset, reduction = "pca", dims = 1:30)
+merged_seu_subset <- RunUMAP(merged_seu_subset, reduction = "pca", dims = 1:10)
 
 # Find neighbors
-merged_seu_subset <- FindNeighbors(merged_seu_subset, reduction = "pca", dims = 1:30)
+merged_seu_subset <- FindNeighbors(merged_seu_subset, reduction = "pca", dims=1:10, k.param=20)
 
 # Find clusters
-merged_seu_subset <- FindClusters(merged_seu_subset, resolution = 0.5)
+merged_seu_subset <- FindClusters(merged_seu_subset, resolution = 0.8)
 
 # save to .h5ad for PENCIL to read
 SaveH5Seurat(merged_seu_subset, filename = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".h5Seurat"), overwrite = TRUE)
 Convert(paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes 
 saveRDS(object = merged_seu_subset, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".rds")) 
 
+
+
+# save to csv, another format of input for PENCIL
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu_subset),]
+write.csv(exp_data_scaled, file=paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
+
+cell_label_df = data.frame(label = merged_seu_subset$ResponseInfo)
+write.csv(cell_label_df, file=paste0(data_dir,"cell_label_info.csv"))
+
+emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(data_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
 
 #print(unique(merged_seu$patient))
 #print(merged_seu$RECIST_response[1:10])
@@ -390,13 +432,19 @@ predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleT
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
 colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
 
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Responder", "yes", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Non-responder", "no", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+
+
+
 meta <- merged_seu@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu <- AddMetaData(merged_seu, meta.new)
 #merged_seu@meta.data$PENCIL_pred_label = NULL
-
-merged_seu$timePt <- ifelse(grepl("^Pre_", merged_seu$patient), "pre", "post")
-merged_seu$patient <- gsub("^Pre_|^Post_", "", merged_seu$patient)
 
 saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".rds")) 
 
@@ -412,7 +460,7 @@ ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_seuratCluster
 
 
 
-DimPlot(merged_seu, group.by = "patient")+
+DimPlot(merged_seu, group.by = "meta")+
   ggtitle("")
 ggsave(filename = paste0(fig_dir, "UMAP_", cellType_of_interest, "_patientID_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
 
@@ -447,13 +495,16 @@ grouped <- merged_seu@meta.data %>%
 # Calculate the number of cells for each patient and predicted_label
 cell_counts <- grouped %>%
   summarise(cell_count = n())
-cell_counts <- cell_counts[cell_counts$PENCIL_pred_label != "Rejected", ]
+cell_counts <- cell_counts[cell_counts$PENCIL_pred_label != "rej", ]
 
 # Create a vector with all unique patient IDs
 all_patients <- unique(cell_counts$meta)
+print(unique(merged_seu$PENCIL_pred_label))
+
+unique_label = c("yes","no")
 # Create a new data frame with all patients having both 'yes' and 'no'
 new_df <- data.frame(meta = rep(all_patients, each = 2),
-                     PENCIL_pred_label = rep(c("yes", "no"), length(all_patients)))
+                     PENCIL_pred_label = rep(unique_label, length(all_patients)))
 # Merge the new data frame with the original data frame based on patient ID and 'yes_no'
 cell_counts_new <- merge(cell_counts, new_df, by = c("meta", "PENCIL_pred_label"), all = TRUE)
 # Replace missing values (NA) in the 'values' column with 0
@@ -466,8 +517,14 @@ df_totals <- aggregate(cell_count ~ meta, cell_counts_new, sum)
 df_ratios <- aggregate(cell_count ~ meta + PENCIL_pred_label, cell_counts_new, sum)
 df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
 df_ratios$meta0 = df_ratios$meta
-df_ratios$meta <- sub("_tumor$", "", df_ratios$meta)
-df_ratios$patient <- str_extract(df_ratios$meta, ".*(?=_)")
+if (dataset == "GSE200996"){
+  df_ratios$meta <- sub("_tumor$", "", df_ratios$meta)
+  df_ratios$patient <- str_extract(df_ratios$meta, ".*(?=_)")
+}else if (dataset == "GSE120575"){
+  df_ratios$patient <- sub("^(.*?)_", "", df_ratios$meta)
+
+}
+
 
 phenotype_df = merged_seu@meta.data[c('patient', phenotype_name)]
 duplicated_rows <- duplicated(phenotype_df[, 1])
@@ -490,7 +547,7 @@ ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
   ) # +
   #scale_fill_manual(values = c("yes" = "#A6CEE3FF", "no" = "#5AA3DAFF"))
 
-ggsave(filename = paste0(fig_dir, "stackedBar_cellRatio_", cellType_of_interest, "_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
+ggsave(filename = paste0(fig_dir, "stackedBar_cellRatio_", cellType_of_interest, "_",sampleType_name,".png"), height = 120, width = 190*1.2, dpi = 800, units = "mm")
 
 ```
 
@@ -535,7 +592,7 @@ if('exh_sig' %in% colnames(merged_seu@meta.data)) {
 # Violin plot of know gene scores for N/NR cells
 ```{r}
 
-feats <- c("exh_sig", "cyt_sig", "CXCL13_sig", "periT_sig", "STAT1_sig", "TCI0_sig", "TIS_sig", "cyt2_sig", "Teff_sig", "Teff_IFNG_sig", "NKR_sig", "preIFNG_sig", "preTCI_sig", "IFNG_sig", "TCI_sig", "prolif_sig", "TRM_sig1", "TRM_sig2")
+feats <- c("exh_sig", "cyt_sig", "CXCL13_sig", "periT_sig", "STAT1_sig", "TCI0_sig", "TIS_sig", "cyt2_sig", "Teff_sig", "Teff_IFNG_sig", "NKR_sig", "preIFNG_sig", "preTCI_sig", "IFNG_sig", "TCI_sig", "prolif_sig", "TRM_sig1", "TRM_sig2") 
 p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = feats, pt.size = 0, ncol = 6) +
   NoLegend()
 ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_ICBsig_PENCILpredLabel_",sampleType_name,".pdf"),  width = 14, height = 8)
@@ -565,12 +622,12 @@ ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"
 # Identify and plot marker genes for N/NR cells
 ```{r}
 
-logFCfilter = 0.5
+logFCfilter = 0.25 # 0.5
 adjPvalFilter = 0.05
 
 ##### find all markers for PENCIL predicted labels
 Idents(object = merged_seu) <- merged_seu@meta.data$'PENCIL_pred_label'
-Cells.markers = FindAllMarkers(merged_seu, only.pos=TRUE, min.pct=0.25, logfc.threshold = logFCfilter)
+Cells.markers = FindAllMarkers(merged_seu, only.pos=T, min.pct=0.25, logfc.threshold = logFCfilter)
 Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
 
 sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))) > logFCfilter & 
@@ -579,11 +636,12 @@ sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))
 write.csv(sig.markers, paste0(processed_dir, "sig.markers_PENCILpredLabel_",cellType_of_interest,'_',sampleType_name,".csv"))
 
 ##### Keep only the top 10 genes for each PENCIL predicted label, ranked by logFC
+topN = 40
 Top10.markers <- sig.markers %>%
     group_by(cluster) %>%
-    top_n(10, avg_log2FC)
+    top_n(topN, avg_log2FC)
 
-DoHeatmap(merged_seu, features = Top10.markers$gene, group.by = "PENCIL_pred_label") + NoLegend()
+DoHeatmap(merged_seu, features = Top10.markers$gene, group.by = "PENCIL_pred_label", slot = "data") + NoLegend()
 ggsave(filename = paste0(fig_dir, "Heatmap_",cellType_of_interest,'_Top10markers_',sampleType_name,".png"), height = 14, width = 14)
 
 p <- DotPlot(merged_seu, 
@@ -604,13 +662,14 @@ ggsave(filename = paste0(fig_dir, "dotplot_",cellType_of_interest,'_Top10markers
 ```{r}
 
 marker_sig = list(
-  R_cell_marker = Top10.markers$gene[1:10],
-  Rej_cell_marker = Top10.markers$gene[11:12],
-  NR_cell_marker = Top10.markers$gene[13:22]
+  R_cell_marker = Top10.markers$gene[1:topN],
+  Rej_cell_marker = Top10.markers$gene[(topN+1):(2*topN)],
+  NR_cell_marker = Top10.markers$gene[(2*topN+1):(3*topN)],
+  R_minus_NR_cell_marker = c(Top10.markers$gene[1:topN], paste0(Top10.markers$gene[(2*topN+1):(3*topN)],'-'))
 )
 
 if('NR_cell_marker' %in% colnames(merged_seu@meta.data)) {
-  # merged_seu@meta.data$CD4T = NULL
+  # merged_seu@meta.data$NR_cell_marker = NULL
   1
 } else {
   merged_seu <- AddModuleScore_UCell(merged_seu, features=marker_sig, name=NULL)
@@ -621,7 +680,7 @@ if('NR_cell_marker' %in% colnames(merged_seu@meta.data)) {
 # merged_seu$NR_cell_marker <- merged_seu$NRR
 # merged_seu$NRR = NULL
 
-feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker")
+feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker", "R_minus_NR_cell_marker")
 p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label", features = feats, pt.size = 0, ncol = 3) +
   NoLegend()
 ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_Top10.marker_PENCILpredLabel_",sampleType_name,".pdf"),  width = 8, height = 8)
@@ -633,11 +692,13 @@ ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"
 
 merged_seu$meta <- factor(merged_seu$meta, levels = unique(df_ratios$meta0))
 
-feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker")
+feats <- c("NR_cell_marker", "Rej_cell_marker", "R_cell_marker", "R_minus_NR_cell_marker")
 p <- VlnPlot(merged_seu, group.by = "meta", features = feats, pt.size = 0, ncol = 1) +
   NoLegend()
 ggsave(plot = p,path = fig_dir,  filename = paste0("Vln_",cellType_of_interest,"_Top10.marker_patient_",sampleType_name,".pdf"),  width = 14, height = 8)
 
+
+#saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, ".rds")) 
 
 ```
 

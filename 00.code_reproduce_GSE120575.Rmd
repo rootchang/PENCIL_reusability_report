@@ -67,6 +67,7 @@ library(readr)
 
 phenotype_name = 'ResponseInfo' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
 cellType_of_interest = 'CD8T' # 'CD8T'  'CD4T'  'B'
+sampleType_name = 'Tissue' # 'PBMC'  'Tissue'
 
 # read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
 data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
@@ -113,16 +114,30 @@ CD8T_cellID$Cell.Name <- gsub("-", ".", CD8T_cellID$Cell.Name)
 seurat_obj@meta.data$cell_type_original <- "Other"
 seurat_obj@meta.data$cell_type_original[rownames(seurat_obj@meta.data) %in% CD8T_cellID$Cell.Name] <- "CD8+ T-cells"
 
+
+
+
+# save raw seurat object with all genes and all cells
+saveRDS(object = seurat_obj, file = paste0(data_dir, "seu_",sampleType_name,"_raw.rds")) 
+
+
 merged_seu_subset <- subset(seurat_obj, subset = cell_type_original %in% c("CD8+ T-cells"))
 
 
-# filter genes to only focus on protein coding genes
+# filter genes to only focus on protein coding genes (Safe-Feldman paper list)
+protein_coding_genes=read.csv(file = paste0(data_dir,"Feldman_protein_coding_genes.csv"), header=T,colClasses = "character")[,1]
+genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
+merged_seu_subset <- merged_seu_subset[genes, ]
+
+# filter genes to only focus on protein coding genes (PENCIL paper method)
 protein_coding_gene_file = paste0(data_dir,'/gene_with_protein_product.txt')
 protein_coding_genes=read.delim(protein_coding_gene_file, header=F,colClasses = "character")[,2]
 genes <- intersect(protein_coding_genes, row.names(merged_seu_subset))
 merged_seu_subset <- merged_seu_subset[genes, ]
 
-merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
+
+## raw data is already log2TPM+1, do not need to normalize any more
+# merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
 merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
 merged_seu_subset <- ScaleData(object=merged_seu_subset)
 #
@@ -131,7 +146,13 @@ merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=
 merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
 merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
+exp_data_scaled = merged_seu@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu),]
+write.csv(exp_data_scaled, file=paste0(data_dir,"exp_data_mvg2000_scale_self.csv"))
 
+logTPM_counts = merged_seu@assays[["RNA"]]@counts[VariableFeatures(merged_seu),]
+write.csv(logTPM_counts, file=paste0(data_dir, 'exp_data_mvg2000_log2TPM_self.csv'))
+
+saveRDS(object = merged_seu_subset, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest,".rds")) 
 
 
 
@@ -151,15 +172,20 @@ Convert(paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_PEN
 saveRDS(object = merged_seu_subset, file = paste0(data_dir, "seu_",sampleType_name,"_", cellType_of_interest,"_PENCIL_wrong.rds")) 
 
 
+
+
+merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,".rds"))
+
 merged_seu = readRDS(file = paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_PENCIL_wrong.rds"))
 
 exp_data_scaled = merged_seu@assays[["RNA"]]@scale.data[VariableFeatures(merged_seu),]
 
 exp_data_unscaled = merged_seu@assays[["RNA"]]@data[VariableFeatures(merged_seu),]
-
-#write.csv(exp_data, file=paste(filepath, 'exp_data_mvg2000(PCG).csv', sep = ''))
-
 write.csv(exp_data_unscaled, file=paste0(data_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_PENCIL_wrong.csv"))
+
+logTPM_counts = merged_seu@assays[["RNA"]]@counts[VariableFeatures(merged_seu),]
+write.csv(logTPM_counts, file=paste0(data_dir, 'exp_data_mvg2000_log2TPM.csv'))
+
 
 cell_label_df = data.frame(label = merged_seu$ResponseInfo)
 write.csv(cell_label_df, file=paste0(data_dir,"cell_label_info.csv"))
@@ -178,8 +204,7 @@ write.csv(emd, file=paste0(data_dir, "seu_",sampleType_name,'_',cellType_of_inte
 library(SeuratData)
 library(SeuratDisk)
 
-phenotype_name = 'Any_response' # GSE200996: 'Any_response'; GSE120575: 'ResponseInfo'
-cellType_of_interest = 'CD8T' # 'CD8T'  'CD4T'  'B'
+
 
 if (cellType_of_interest == 'CD8T'){
   if (dataset == "GSE120575"){ # 'CD8T' cell annotation from the original paper
@@ -297,7 +322,6 @@ colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
 
 meta <- merged_seu@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
-merged_seu <- AddMetaData(merged_seu, meta.new)
 #merged_seu@meta.data$PENCIL_pred_label = NULL
 
 merged_seu$timePt <- ifelse(grepl("^Pre_", merged_seu$patient), "pre", "post")

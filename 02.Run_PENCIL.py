@@ -8,6 +8,7 @@ import warnings
 warnings.filterwarnings('ignore') #to ignore warnings on the output.
 import time
 from scipy.sparse import issparse
+from collections import Counter
 
 start_time  = time.time()
 h5ad_fn = sys.argv[1] # '../02.Input/GSE200996/seu_Tissue_Tcell.h5ad'
@@ -15,8 +16,8 @@ phenotype = sys.argv[2] # 'RECIST_response' # 'Volumetric_response' # "Any_respo
 data_name = sys.argv[3] # 'GSE200996'
 mode = sys.argv[4] # 'multi-classification'  'regression'
 use_HVG = int(sys.argv[5]) # 1: use high-variable-genes with scaled data. 0: use all genes with log1p expression (?)
-use_scaledData = int(sys.argv[6]) # 1: use scaled data (for HVG only). 0: use unscaled data (for either HVGs or all genes).
-interrupt = int(sys.argv[7]) # 1: Interrupt to check the raw phenotypic labels. 0: no interruption.
+use_scaledData = int(sys.argv[6]) # 1: use scaled data (for HVG only). 0: use normalized but unscaled data (for either HVGs or all genes).
+interrupt = int(sys.argv[7]) # 1: Interrupt to check the feasibility of data (e.g., remove unwanted phenotypic labels and determine the class weights). 0: no interruption.
 
 
 print('************** Step 0: loading data ...')
@@ -24,33 +25,20 @@ print('************** Step 0: loading data ...')
 #           adata.raw.X stores the log1p normalized expression of all genes
 adata = sc.read_h5ad(h5ad_fn)
 print(adata)
-print(adata.X[0:5,0:5])
-print(adata.var['vst.variable'][0:5])
-print(len(adata.var['vst.variable']))
-print(adata.var_names[0:5])
-print(adata.obs_names[0:5])
-print(len(adata.var_names))
-# print(adata.obs[phenotype][0:5])
-# R_count = sum(adata.obs[phenotype]=='Responder')
-# print('Responder num: ', R_count)
-raise Exception('ctg')
 
 print('************** Step 1: preparing PENCIL input parameters ...')
-labels_raw = adata.obs[phenotype]
-print('Raw phenotypic labels: ', set(labels_raw))
-if interrupt:
-    raise Exception('Interrupt to check the raw phenotypic labels')
 # Specify the phenotypic values to be removed
 values_to_remove = ['NA'] # ['not measurable']
 # Subset the AnnData object
 adata = adata[~adata.obs[phenotype].isin(values_to_remove)]#.copy()
 labels_raw = adata.obs[phenotype]
-print('Clean labels: ', set(labels_raw))
 if mode == 'multi-classification':
     labels_raw = pd.Categorical(labels_raw)
     class_names = list(labels_raw.categories)
-    #print('class_labels: ', class_names)
     labels = labels_raw.codes
+    #label_dict = dict(zip(class_names, range(len(class_names))))
+    #labels = list(map(lambda s: label_dict[s], labels_raw))
+    #labels = np.array(labels)
 else:
     labels = np.array(labels_raw.values, dtype=float)
     #print('class_labels: ', labels)
@@ -71,16 +59,24 @@ else:
         data = adata.raw.X.copy().todense()
     else:
         data = adata.raw.X.copy()
-class_weights = [2.0, 1.0] # [2.0, 1.0] # None
+class_weights = [1.0, 2.0] # [1.0, 2.0] # None
 emd = adata.obsm['X_umap']
 print('data.shape: ', data.shape)
-print(data[0:5,0:5])
-print('class_labels: ', labels)
-print('labels.shape: ', labels.shape)
+if use_HVG:
+    print('Genes (first 5): ', adata.var['vst.variable'].index.tolist()[0:5])
+else:
+    print('Genes (first 5): ', list(adata.var_names[0:5]))
+print('Cells (first 5): ', list(adata.obs_names[0:5]))
+print('Expression data (first 5*5):\n', data[0:5,0:5])
+if mode == 'multi-classification':
+    print('class_names: ', class_names)
+print('Unique labels and occurrence: ', sorted(list(Counter(labels).items()))) # sorted(list(Counter(labels).items()))
 print('class_weights: ', class_weights)
+print('labels.shape: ', labels.shape)
 print('emd.shape: ', emd.shape)
 
-raise Exception('ctg')
+if interrupt:
+    raise Exception('Interrupt to check the feasibility of input data.')
 
 print('************** Step 2: running PENCIL ...')
 if mode == 'multi-classification':
