@@ -22,12 +22,15 @@ embedding_fn = sys.argv[3] # '../02.Input/GSE200996/seu_Tissue_CD8T_embedding_um
 data_name = sys.argv[4] # 'GSE200996' 'GSE120575_Tissue_CD8T'
 phenotype = sys.argv[5] # 'ResponseInfo'
 mode = sys.argv[6] # 'multi-classification'  'regression'
-class_weight = float(sys.argv[7]) # class_weights = [1.0, class_weight]
+class_weight = float(eval(sys.argv[7])) # class_weights = [1.0, class_weight]
+exp_newdata_fn = sys.argv[8] # new test data
 
 print('************** Step 0: loading data ...')
 exp_df=pd.read_csv(exp_fn, sep=',',index_col=0)
 data=exp_df.values.T
-anno_df = pd.read_csv(anno_fn, sep=',', index_col=0)
+exp_new_df=pd.read_csv(exp_newdata_fn, sep=',',index_col=0)
+data_new=exp_new_df.values.T
+anno_df = pd.read_csv(anno_fn, sep=',', index_col=0, dtype=str)
 labels_raw = anno_df.values.flatten()
 
 print('************** Step 1: preparing PENCIL input parameters ...')
@@ -88,6 +91,12 @@ else:
 
 w = pencil.gene_weights(plot=True)
 plt.close()
-# pred_new, confidence_new = pencil.transform(data_new) # apply trained PENCIL on new data
+
+print('************** Step 3: predicting on new data ...')
+pred_new, confidence_new = pencil.transform(data_new) # apply trained PENCIL on new data
+save_fn = './results/'+data_name+'/py/'+phenotype+'/predicted_labels_test.csv'
+df = pd.DataFrame({'predicted_label': pred_new, 'confidence': confidence_new})
+df.loc[df['confidence'] < 0, 'predicted_label'] = 'Rejected'
+df.to_csv(save_fn, index=False)
 
 print('All done! Time used: %.2f s'%(time.time() - start_time))

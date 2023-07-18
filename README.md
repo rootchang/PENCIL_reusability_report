@@ -60,14 +60,12 @@ Table 1. Explanation for the parameters used by `02.Run_PENCIL.py`.
 (2.2.1) To run PENCIL for the GSE120575 melanoma dataset using tissue CD8T/CD4T/B cells that presented in the original PENCIL paper, run the following code:
 
 ```{bash}
-# tissue CD8T cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD8T.h5ad ResponseInfo GSE120575_Tissue_CD8T multi-classification 1 1 0
 
-# tissue CD4T cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_CD4T.h5ad ResponseInfo GSE120575_Tissue_CD4T multi-classification 1 0
+# tissue CD8T All cells
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ResponseInfo multi-classification 2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_Test.csv
 
-# tissue B cells
-python 02.Run_PENCIL.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/GSE120575/seu_Tissue_B.h5ad ResponseInfo GSE120575_Tissue_B multi-classification 1 0
+# tissue CD8T Train cells
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_Train.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/cell_label_info_Train.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_Train_embedding_umap.csv GSE120575_Tissue_CD8T_Train ResponseInfo multi-classification 2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_Test.csv
 
 ```
 
@@ -87,6 +85,7 @@ exp_data_mvg2000_log2TPM.csv
 
 exp_data_mvg2000_log2TPM_self.csv
 exp_data_mvg2000_scale_self.csv
+
 ```
 
 
