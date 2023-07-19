@@ -1,0 +1,186 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+dataset = 'GSE120575'
+
+# local
+data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
+processed_dir <- paste0("../03.Results/", dataset, '/')
+fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
+
+# server
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+data_dir <- paste0(shared_data_dir, dataset, '/')
+processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
+fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
+PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts/results/")
+```
+
+
+# load raw expression and phenotype data and construct seurat object for GSE120575 (Sade-Feldman et al., melanoma, ICB dataset)
+```{r}
+
+library(readr)
+phenotype_name = 'ResponseInfo'
+
+# read in log2(TPM+1) values (transcript-per-million reads) for 55,737 transcripts (rows) and 16,291 cells (columns)
+data <- read.table(paste0(data_dir,"GSE120575_Sade_Feldman_melanoma_single_cells_TPM_GEO.txt"), header = TRUE, sep = "\t", row.names = 1, stringsAsFactors = FALSE, fill = TRUE) 
+new_colnames = c(colnames(data)[2:16292],'X')
+colnames(data) = new_colnames
+data <- data[, -ncol(data)] # remove last NA column
+patient_df <- data.frame(patient = t(data[1,]))
+colnames(patient_df) = c('patient')
+patient_df$patient <- sub("Post_P17_myeloid_enriched", "Post_P17", patient_df$patient)
+patient_df$patient <- sub("Post_P19_myeloid_enriched", "Post_P19", patient_df$patient)
+patient_df$patient <- sub("Post_P2_T_enriched", "Post_P2", patient_df$patient)
+patient_df$patient <- sub("Post_P4_T_enriched", "Post_P4", patient_df$patient)
+patient_df$patient <- sub("Post_P10_T_enriched", "Post_P10", patient_df$patient)
+patient_df$patient <- sub("Post_P13_T_enriched", "Post_P13", patient_df$patient)
+patient_df$patient <- sub("Post_P8_T_enriched", "Post_P8", patient_df$patient)
+patient_df$patient <- sub("Post_P16_T_enriched", "Post_P16", patient_df$patient)
+patient_df$patient <- sub("Post_P6_T_enriched", "Post_P6", patient_df$patient)
+patient_df$cellID = rownames(patient_df)
+data <- data[-1,] # remove patientID row
+
+# Create a Seurat object
+merged_seu <- CreateSeuratObject(counts = data)
+# Assign the normalized counts to merged_seu[["RNA"]]@data
+merged_seu[["RNA"]]@data <- as.matrix(merged_seu[["RNA"]]@counts)
+# convert log2(TPM+1) to TPM
+merged_seu[["RNA"]]@data <- 2^merged_seu[["RNA"]]@data-1 
+# Create a new Seurat object with the TPM as counts
+merged_seu_new <- CreateSeuratObject(counts = merged_seu[["RNA"]]@data) # TPM
+merged_seu_new[["RNA"]]@data <- as.matrix(merged_seu[["RNA"]]@counts) # log2(TPM+1)
+merged_seu = merged_seu_new
+
+# Assign project name
+merged_seu$project <- "GSE120575_Sade_Feldman_melanoma"
+
+# add phenotype info
+phenotype_df_raw <- read.table(paste0(data_dir,"GSE120575_singleCells_metaInfo_clean.txt"), sep = "\t", quote = "", header = TRUE, stringsAsFactors = FALSE)
+phenotype_df = phenotype_df_raw[,c(5,6,7)] # "CellID" "PatientID" "ResponseInfo" "DrugType"  
+colnames(phenotype_df) = c("patient", "ResponseInfo", "DrugType")
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+# keep only non-duplicated patientID --> dim(phenotype_df.new)=c(48,3)
+phenotype_df.new <- merge(patient_df, phenotype_df, by.x = "patient", by.y = "patient")
+rownames(phenotype_df.new) <- phenotype_df.new$cellID
+
+meta <- merged_seu@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df.new, by.x = "cell_names", by.y = "cellID")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+meta.new <- meta.new[, !(names(meta.new) %in% c("cellID", "cell_names"))]
+merged_seu <- AddMetaData(merged_seu, meta.new)
+
+merged_seu$meta = merged_seu$patient
+merged_seu$timePt <- ifelse(grepl("^Pre_", merged_seu$meta), "pre", "post")
+merged_seu$patient <- gsub("^Pre_|^Post_", "", merged_seu$meta)
+
+merged_seu$ResponseInfo <- ifelse(merged_seu$ResponseInfo == "Responder", 1, 0)
+
+### delete a meta data column
+# merged_seu@meta.data$patient <- NULL
+
+
+############# Optional: Split data to training and test parts
+patient_phenotype_df <- table(merged_seu@meta.data$meta, merged_seu@meta.data[[phenotype_name]])
+patient_phenotype_df <- sweep(patient_phenotype_df, MARGIN = 1, STATS = rowSums(patient_phenotype_df), FUN = "/")
+patient_phenotype_df <- data.frame(phenotype = apply(patient_phenotype_df, 1, function(x) {
+  max_value = max(x)
+  return(names(x)[which.max(x)])
+}))
+patient_phenotype_df$meta = rownames(patient_phenotype_df)
+
+train.index <- createDataPartition(patient_phenotype_df$phenotype, p = .7, list = FALSE)
+meta_train = rownames(patient_phenotype_df)[train.index]
+merged_seu$meta_train = 0
+merged_seu$meta_train[merged_seu$meta %in% meta_train] = 1
+
+
+##### Optional: Re-do CD8T cell annotation using original annotation by Sade-Feldman et al. 2018 Cell 
+CD8T_cellID = read.csv(file = paste0(data_dir,"CD8T_original_cellAnno.csv"))
+CD8T_cellID$Cell.Name <- gsub("-", ".", CD8T_cellID$Cell.Name)
+merged_seu@meta.data$cell_type_originalCD8T <- "Other"
+merged_seu@meta.data$cell_type_originalCD8T[rownames(merged_seu@meta.data) %in% CD8T_cellID$Cell.Name] <- "CD8+ T-cells"
+
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,"_all_raw.rds")) 
+
+```
+

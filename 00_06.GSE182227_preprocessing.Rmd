@@ -1,0 +1,313 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+filter_cell_num <- 1
+max_nCount_RNA=40000 # Detected RNA counts in a cell < 40000
+
+# the following parameters are set following Luoma et al. 2022 Cell
+mito_cutoff=20 # mitochondrial genes < 20%
+variable_genes=2000 # high variable genes = 2000
+min_nFeature_RNA=200 # Detected genes in a cell > 200
+min_nCount_RNA=400 # Detected RNA counts in a cell > 400
+
+dataset = 'GSE182227'
+
+# local
+data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
+processed_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/03.Results/", dataset, '/')
+fig_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/03.Results/", dataset, '/Figures/')
+
+# server
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+data_dir <- paste0(shared_data_dir, dataset, '/')
+processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
+fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
+```
+
+# Download meta data from GEO
+```{r}
+
+# If not already installed, install the GEOquery package
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+#BiocManager::install("GEOquery")
+
+# Load the GEOquery package
+library(GEOquery)
+
+gset <- getGEO(dataset, AnnotGPL = FALSE, getGPL = F) # GSEMatrix = TRUE, 
+
+data_raw0 = gset[[1]]
+pd=pData(data_raw0) # get the clinical information from data_raw0
+clinical_info = pd[,c(1,2,8,40,42)] # print, check and keep the most useful columns
+#clinical_info$description = str_replace_all(clinical_info$description, c("-" = "."))
+##!!!!!!! IMPORTANT: need to check dataframe pd to determine which columns to keep !!!!!!!
+write.csv(clinical_info, file = paste0(data_dir,'clinicInfo.csv'), quote = F,row.names = T)
+
+
+```
+
+# Make clean features.tsv file
+```{r}
+# the original features.tsv file only contains gene name rather than in the format of 'ensembleID  geneID', we need to add the ensembleID for it.
+
+library(rtracklayer)
+library(tidyverse)
+
+
+gtf_dir = "/Users/changt7/Documents/00.PostDocWork/CancerResearch/03.Bio_Info/Gencode_gtf/"
+gtf <- rtracklayer::import(paste0(gtf_dir,'gencode.v39.annotation.gtf'))
+
+gtf_df <- as.data.frame(gtf)
+
+# Extract gene_id and gene_name from mcols (metadata)
+gtf_df$gene_id <- mcols(gtf)$gene_id
+gtf_df$gene_name <- mcols(gtf)$gene_name
+
+# Now use dplyr's filter and select
+gene_info <- gtf_df %>%
+  dplyr::filter(type == "gene") %>%
+  dplyr::select(gene_id, gene_name)
+
+# Clean gene_id if needed
+gene_info$gene_id <- gsub("\\..*", "", gene_info$gene_id)
+
+# Remove duplicates if needed
+gene_info <- gene_info %>% distinct()
+
+feature_dir = "/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/GSE182227/GSE182227/"
+features <- read.table(paste0(feature_dir,"features.tsv"), header = FALSE)
+colnames(features) <- c("gene_name")
+
+gene_info_unique <- gene_info %>% distinct(gene_name, .keep_all = TRUE)
+final_output <- left_join(features, gene_info_unique, by = "gene_name")
+
+final_output <- final_output %>% select(gene_id, gene_name)
+
+final_output$gene_id <- replace_na(final_output$gene_id, "ENSG00000000000")
+
+write.table(final_output, paste0(feature_dir,"features2.tsv"), sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+```
+
+# [Only run for once!] build seurat object from raw data
+```{r}
+
+seurat_list <- list()
+
+# List all the Matrix Market files in the directory
+mtx_files <- list.files(path = data_dir, pattern = paste0("*_matrix.mtx.gz"))
+# Get the unique prefixes (sample names) from the file names
+samples <- unique(sapply(strsplit(mtx_files, "_matrix.mtx.gz"), "[[", 1))
+
+# group files from the same sample to a folder named by the sample
+for (sample in samples) {
+  dir.create(paste0(data_dir,sample))
+  file.rename(from = paste0(data_dir,list.files(path = data_dir, pattern = paste0(sample, "_.*.gz"))), 
+              to = paste0(data_dir,sample, "/", list.files(path = data_dir, pattern = paste0(sample, "_.*.gz"))))
+}
+# change file names to "barcodes.tsv.gz","features.tsv.gz","matrix.mtx.gz"
+for (sample in samples) {
+  files <- list.files(path = paste0(data_dir,sample), pattern = paste0(sample, "_.*.gz"))
+  new_names <- gsub(paste0(sample, "_"), "", files)
+  file.rename(from = paste0(data_dir,sample, "/",files), to = paste0(data_dir,sample, "/", new_names))
+}
+
+#samples = c("GSE182227")
+
+# Read 10X data
+for (sample in samples) {
+  data <- Read10X(data.dir = paste0(data_dir,sample))
+  seurat_obj <- CreateSeuratObject(data, project = sample)
+  seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+  seurat_obj[["percent.ribo"]] <- PercentageFeatureSet(seurat_obj, pattern = "^RP[SL]")
+  seurat_obj <- subset(seurat_obj, subset = percent.mt < mito_cutoff & nFeature_RNA > min_nFeature_RNA & nCount_RNA > min_nCount_RNA & nCount_RNA < max_nCount_RNA)
+  cell_names_split <- strsplit(colnames(seurat_obj), "_")
+  # Extract 'patient', 'sample', and 'meta' strings
+  meta <- sapply(cell_names_split, function(x) x[1])
+  meta[meta == "OP4"] = 'OP4CD45N'
+  meta[meta == "OP6"] = 'OP6CD45N'
+  meta[meta == "OP9"] = 'OP9CD45N'
+  meta[meta == "OP14"] = 'OP14CD45N'
+  meta[meta == "OP35BOT"] = 'OP35'
+  meta[meta == "OP9GEX"] = 'OP9CD45P'
+  patient <- meta
+  sample_names <- meta
+  # Add new metadata to the Seurat object
+  seurat_obj$patient <- patient
+  seurat_obj$sample <- sample_names
+  seurat_obj$meta <- meta
+  seurat_list[[sample]] <- seurat_obj
+}
+
+
+# ave all samples
+saveRDS(seurat_obj, file = paste0(processed_dir,"seu_all_raw.rds"))
+
+#seurat_obj = readRDS(file = paste0(processed_dir,"seu_all_raw.rds"))
+
+```
+
+
+# Add phenotype info 
+```{r}
+
+# Read in phenotype info.
+phenotype_df = read.csv(file = paste0(data_dir,"clinicInfo.csv"))
+phenotype_df = phenotype_df[,c(2,4,5)]
+colnames(phenotype_df) = c('sample_raw', 'cancerOrigin', 'HPV')
+
+a1 = sort(phenotype_df$sample)
+a2 = sort(unique(seurat_obj$sample))
+a2 = c(a2[1:9],a2[11],a2[10],a2[13],a2[12],a2[15:16],a2[14],a2[17:24])
+mapping <- setNames(object = a2, nm = a1)
+
+phenotype_df$sample <- mapping[phenotype_df$sample_raw]
+
+# Add phenotype info to seurat object
+meta <- seurat_obj@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "sample", by.y = "sample")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+seurat_obj <- AddMetaData(seurat_obj, meta.new)
+seurat_obj$cell_names=NULL
+seurat_obj$sample_raw=NULL
+
+
+
+
+
+
+
+saveRDS(seurat_obj, file = paste0(processed_dir,"seu_all_raw.rds"))
+
+# save useful tumor tissue samples
+seurat_obj_t <- subset(merged_seu, subset = sample %in% c("OP10","OP12","OP13","OP14CD45P","OP16","OP17","OP19","OP20","OP33","OP34","OP35","OP4CD45P","OP5","OP6CD45P","OP8","OP9CD45P"))
+saveRDS(seurat_obj_t, file = paste0(processed_dir,"seu_Tissue.rds"))
+
+```
+
+
+
+# QC, normalization, dimension reduction, and clustering
+```{r}
+
+merged_seu = seurat_obj
+rm(seurat_obj)
+rm(seurat_obj_t)
+gc()
+
+# Normalize the data
+merged_seu <- NormalizeData(merged_seu) # log(x/sum(x)*10000+1)
+
+# Find highly variable genes
+merged_seu <- FindVariableFeatures(merged_seu)
+
+# Scale the data
+merged_seu <- ScaleData(merged_seu) # pbmc <- SCTransform(pbmc, vars.to.regress = "CC.Difference")
+
+# Perform PCA
+merged_seu <- RunPCA(merged_seu, pc.genes = merged_seu@var.genes)
+
+# Perform UMAP
+merged_seu <- RunUMAP(merged_seu, reduction = "pca", dims = 1:30)
+
+# Find neighbors
+merged_seu <- FindNeighbors(merged_seu, reduction = "pca", dims = 1:30)
+
+# Find clusters
+merged_seu <- FindClusters(merged_seu, resolution = 1) # PBMC: 1   Tissue: 2
+
+# Save to file
+saveRDS(merged_seu, file = paste0(processed_dir,"seu_all_raw.rds"))
+
+```
+
+# check UMAP for OP9CD45P
+```{r}
+# Plot highlighted seurat clusters
+seurat_obj_t$highlighted.samples <- ifelse(seurat_obj_t$sample %in% c("OP5","OP8"), as.character(seurat_obj_t$sample), "Other") # "OP9CD45N", "OP9CD45P", 
+
+DimPlot(seurat_obj_t, group.by = 'highlighted.samples', label = TRUE, repel = TRUE, raster=FALSE)+#NoLegend()+
+  #scale_color_manual(values = c("blue", "red", "green", "purple", "yellow", "orange", "gray"))+
+  ggtitle("")
+#ggsave(filename = paste0(fig_dir, "UMAP_clusterid_highlight_",sampleType_name,".png"), height = 120, width = 140, dpi = 800, units = "mm")
+
+```

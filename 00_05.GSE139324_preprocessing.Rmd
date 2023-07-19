@@ -1,0 +1,129 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+dataset = 'GSE139324'
+
+# local
+data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
+processed_dir <- paste0("../03.Results/", dataset, '/')
+fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
+
+# server
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+data_dir <- paste0(shared_data_dir, dataset, '/')
+processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
+fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
+PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts/results/")
+```
+
+# build seurat object from raw data
+```{r}
+
+# Read the .h5 file
+counts <- Read10X_h5(filename = paste0(data_dir, "SKCM_GSE166181_aPD1_expression.h5"))
+
+# Create a Seurat object
+seurat_obj <- CreateSeuratObject(counts = counts)
+
+```
+
+
+# Add phenotype info for GSE169246 (Zeming Zhang, TNBC, ICB dataset)
+```{r}
+
+# Read in phenotype info.
+phenotype_df = read.csv(file = paste0(data_dir,"clinical_info.csv"))
+phenotype_df = phenotype_df[,c(1,7,9,10,15:26)]
+colnames(phenotype_df) = c(colnames(phenotype_df)[1:4],'Downstaging','RECIST_response','Volumetric_response','Viable_Tumor', 'Pathological_response', 'Pathological_response_binned', 'Max_response', 'Any_response', 'OS_days', 'PFS_days', 'PFS_event', 'OS_event')
+
+# Add phenotype info to seurat object
+meta <- merged_seu@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "patient", by.y = "patient_id")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+merged_seu <- AddMetaData(merged_seu, meta.new)
+#cell.names <- sapply(seq_along(rownames(merged_seu@meta.data)), function(i) paste0("cell_", i), USE.NAMES = F)
+#merged_seu@meta.data$cellID <- cell.names # rename cells to cell_1, cell_2, ...
+#merged_seu <- RenameCells(object = merged_seu, new.names = merged_seu@meta.data$cellID)
+#print(merged_seu$cellID[1:10])
+
+saveRDS(object = merged_seu, file = paste0(data_dir, "seu_",sampleType_name,"_all_raw.rds")) 
+
+```
+
