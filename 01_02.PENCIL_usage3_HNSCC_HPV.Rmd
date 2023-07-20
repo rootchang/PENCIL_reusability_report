@@ -287,7 +287,7 @@ sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
 module load python/3.8
 
 ## Run PENCIL with .csv files as input, which seems work well
-python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/seu_Tumor_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/seu_Tumor_CD8T_embedding_umap.csv GSE139324_Tumor_CD8T HPVinfection multi-classification 2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE180268/seu_Tumor_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE182227/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE200996/seu_Tissue_CD8T.csv
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/seu_Tumor_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE139324/seu_Tumor_CD8T_embedding_umap.csv GSE139324_Tumor_CD8T HPVinfection multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE180268/seu_Tumor_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE182227/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE200996/seu_Tissue_CD8T.csv
 
 ```
 

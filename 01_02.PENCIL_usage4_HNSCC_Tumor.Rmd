@@ -86,11 +86,11 @@ dataset_train = 'GSE139324'
 processed_dir_train <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_train, '/')
 fig_dir_train = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_train, "/Figures/")
 
-dataset_test1 = 'GSE180268'
+dataset_test1 = 'GSE164690'
 processed_dir_test1 <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test1, '/')
 fig_dir_test1 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test1, "/Figures/")
 
-dataset_test2 = 'GSE182227'
+dataset_test2 = 'GSE162205'
 processed_dir_test2 <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test2, '/')
 fig_dir_test2 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test2, "/Figures/")
 
@@ -104,14 +104,15 @@ fig_dir_test3 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Resu
 # make PENCIL input files for training data (tumor CD8T cells)
 ```{r}
 
-sampleType_name = 'Tumor'
-phenotype_name = 'HPV'
+sampleType_name = 'all'
+phenotype_name = 'tissue'
 cellType_of_interest = 'CD8T'
 
 merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))
+merged_seu_subset$tissue <- ifelse(merged_seu_subset$tissue == "TIL", 1, 0)
 
 #### print cell number for each phenotype, used for class_weights setting
-print(table(merged_seu_subset$HPV))
+print(table(merged_seu_subset$tissue))
 
 # filter genes to keep only protein coding genes
 protein_coding_gene_file = paste0(shared_data_dir, 'Feldman_protein_coding_genes.csv')
@@ -129,6 +130,13 @@ merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
 merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
 
+# Plot UMAP of PBMC/TIL to check batch effect
+DimPlot(merged_seu_subset, group.by = "tissue", raster=FALSE)+
+  # scale_color_manual(values = my.cols)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir_train, "UMAP_tissue_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
 write.csv(exp_data_scaled, file=paste0(processed_dir_train,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
 cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
@@ -143,11 +151,12 @@ saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train, "seu_",sa
 ## make PENCIL input files for test1 (Fill 0-value for missing genes in new test data)
 ```{r}
 
-sampleType_name = 'Tumor'
-phenotype_name = 'HPV'
+sampleType_name = 'all3samples'
+phenotype_name = 'tissue'
 cellType_of_interest = 'CD8T'
 
 merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))
+merged_seu_subset$tissue <- ifelse(merged_seu_subset$sample == "Tissue", 1, 0)
 
 num_fill_genes = length(variable_genes) - sum(variable_genes %in% row.names(merged_seu_subset))
 print(num_fill_genes)
@@ -172,6 +181,13 @@ merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
 merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
 
+# Plot UMAP of PBMC/TIL to check batch effect
+DimPlot(merged_seu_subset, group.by = "tissue", raster=FALSE)+
+  # scale_color_manual(values = my.cols)+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir_test1, "UMAP_tissue_",sampleType_name,".png"), height = 120, width = 190, dpi = 800, units = "mm")
+
+
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
 write.csv(exp_data_scaled, file=paste0(processed_dir_test1,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
 cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
@@ -186,8 +202,8 @@ saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1, "seu_",sa
 ## make PENCIL input files for test2 (Fill 0-value for missing genes in new test data)
 ```{r}
 
-sampleType_name = 'Tissue'
-phenotype_name = 'HPV'
+sampleType_name = 'all'
+phenotype_name = 'tissue'
 cellType_of_interest = 'CD8T'
 
 merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))

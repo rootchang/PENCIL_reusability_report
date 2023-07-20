@@ -1,0 +1,158 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+dataset = 'GSE139324'
+sampleType_name = 'Tumor'
+
+# local
+data_dir <- paste0("/Users/changt7/Documents/00.PostDocWork/CancerResearch/01.Projects/00.Collaborating_projects/05.PENCIL/02.Input/", dataset, '/')
+processed_dir <- paste0("../03.Results/", dataset, '/')
+fig_dir <- paste0("../03.Results/", dataset, '/Figures/')
+
+# server
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+data_dir <- paste0(shared_data_dir, dataset, '/')
+processed_dir <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, '/')
+fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset, "/Figures/")
+
+```
+
+# build seurat object from raw data
+```{r}
+
+# Read the .h5 file
+counts <- Read10X_h5(filename = paste0(data_dir, "HNSC_GSE139324_expression.h5"))
+
+# Create a Seurat object
+seurat_obj <- CreateSeuratObject(counts = counts)
+
+# Create a new Seurat object with the un-normalized (counts per 10000) as counts
+seurat_obj[["RNA"]]@data <- exp(as.matrix(seurat_obj[["RNA"]]@data))-1 
+seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data) # un-normalized data 
+seurat_obj_new <- NormalizeData(seurat_obj_new) # log-normalization
+seurat_obj = seurat_obj_new
+
+rm(seurat_obj_new)
+gc()
+
+```
+
+
+# Add phenotype info
+```{r}
+
+# Read in phenotype info.
+phenotype_df = read.csv(file = paste0(data_dir,"HNSC_GSE139324_CellMetainfo_table.tsv"), sep='\t')
+phenotype_df = phenotype_df[,c(1,5,8:15)]
+colnames(phenotype_df) = c('cell_names', 'cell_type', 'sample', 'tissue', 'disease', 'HPV', 'patient', 'sex', 'metastasis', 'TNMstage')
+phenotype_df$HPV[phenotype_df$HPV=='HPV_negative'] = 0
+phenotype_df$HPV[phenotype_df$HPV=='HPV_positive'] = 1
+
+# Add phenotype info to seurat object
+meta <- seurat_obj@meta.data
+meta$cell_names <- rownames(meta) # save row names before merge with phenotype data
+meta.new <- merge(meta, phenotype_df, by.x = "cell_names", by.y = "cell_names")
+rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
+seurat_obj <- AddMetaData(seurat_obj, meta.new)
+seurat_obj$cell_names=NULL
+
+saveRDS(object = seurat_obj, file = paste0(processed_dir, "seu_all_raw.rds")) 
+
+```
+
+
+# extract CD8T cells
+```{r}
+
+seurat_obj = readRDS(file = paste0(processed_dir, "seu_all_raw.rds")) 
+
+seurat_obj$CD8T_cell <- ifelse(grepl("CD8", seurat_obj$cell_type, ignore.case = TRUE), "CD8+ T-cells", "Other")
+
+seurat_obj_CD8T <- subset(seurat_obj, subset = CD8T_cell == "CD8+ T-cells")
+
+seurat_obj_CD8T_disease <- subset(seurat_obj_CD8T, subset = disease == "HNSCC")
+saveRDS(seurat_obj_CD8T_disease, file = paste0(processed_dir,"seu_all_CD8T.rds"))
+
+seurat_obj_CD8T_tumor <- subset(seurat_obj_CD8T, subset = tissue == "TIL")
+
+saveRDS(seurat_obj_CD8T_tumor, file = paste0(processed_dir,"seu_Tumor_CD8T.rds"))
+
+
+
+```

@@ -146,21 +146,23 @@ meta.new <- merge(meta, phenotype_df, by.x = "sample", by.y = "sample")
 rownames(meta.new) <- meta.new$cell_names # retrieve rownames 
 seurat_obj <- AddMetaData(seurat_obj, meta.new)
 seurat_obj$cell_names = NULL
-seurat_obj$ResponseInfo = 0
-seurat_obj$ResponseInfo[seurat_obj$treatment=='Untreated'] = NA
-seurat_obj$ResponseInfo[seurat_obj$treatment=='OR'] = 1
+seurat_obj$ICBresponse = 0
+seurat_obj$ICBresponse[seurat_obj$treatment=='Untreated'] = NA
+seurat_obj$ICBresponse[seurat_obj$treatment=='OR'] = 1
+seurat_obj$sex <- ifelse(seurat_obj$sex == "M", 1, 0)
+
 
 saveRDS(object = seurat_obj, file = paste0(processed_dir, "seu_",sampleType_name,"_all_raw.rds")) 
 
 
 ```
 
-# extract CD8T cells for tumor samples with response information 
+# extract CD8T cells for tumor samples
 ```{r}
 
-seurat_CD8T = subset(seurat_obj, subset = cell_type == 'T.CD8')
+seurat_obj = readRDS(file = paste0(processed_dir, "seu_",sampleType_name,"_all_raw.rds")) 
 
-seurat_CD8T = subset(seurat_CD8T, subset = treatment!='Untreated')
+seurat_CD8T = subset(seurat_obj, subset = cell_type == 'T.CD8')
 
 saveRDS(object = seurat_CD8T, file = paste0(processed_dir, "seu_",sampleType_name,"_CD8T.rds")) 
 

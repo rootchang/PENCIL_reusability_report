@@ -148,6 +148,8 @@ phenotype_name = 'ResponseInfo'
 cellType_of_interest = 'CD8T'
 
 merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))
+merged_seu_subset = subset(merged_seu_subset, subset = treatment!='Untreated') # filter out untreated patients
+
 num_fill_genes = length(variable_genes) - sum(variable_genes %in% row.names(merged_seu_subset))
 print(num_fill_genes)
 if (num_fill_genes > 0){
@@ -282,7 +284,7 @@ sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
 module load python/3.8
 
 ## Run PENCIL with .csv files as input, which seems work well
-python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T.csv
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T.csv
 
 ```
 
@@ -290,7 +292,8 @@ python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.
 # Add PENCIL identified phenotypic cell labels to all training and test datasets
 ```{r}
 
-PENCIL_result_dir_deep = paste0(PENCIL_result_dir, 'GSE120575_Tissue_CD8T/py/ICBresponse/')
+phenotype_name = 'ICBresponse'
+PENCIL_result_dir_deep = paste0(PENCIL_result_dir, 'GSE120575_Tissue_CD8T/py/',phenotype_name,'/')
 
 #### for training data
 # load seurat object
@@ -298,19 +301,20 @@ merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T.r
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+colnames(predicted_cell_labels_new) = c(paste0("PENCIL_pred_label_",phenotype_name))
 
 # change label names to yes, no, rej
-label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+label_names = unique(predicted_cell_labels_new[paste0("PENCIL_pred_label_",phenotype_name)])
 print(label_names)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("1", "yes", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("0", "no", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("Rejected", "rej", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 
 meta <- merged_seu_subset@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
-merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
+print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
 saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train,"seu_Tissue_CD8T.rds")) 
 
@@ -321,21 +325,23 @@ merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T.r
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test1.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+colnames(predicted_cell_labels_new) = c(paste0("PENCIL_pred_label_",phenotype_name))
 
 # change label names to yes, no, rej
-label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+label_names = unique(predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 print(label_names)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("1", "yes", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("0", "no", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("Rejected", "rej", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 
 meta <- merged_seu_subset@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
-merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
+print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
 saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1,"seu_Tissue_CD8T.rds")) 
+
 
 
 #### for test2 data
@@ -344,21 +350,23 @@ merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_Tissue_CD8T.r
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test2.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+colnames(predicted_cell_labels_new) = c(paste0("PENCIL_pred_label_",phenotype_name))
 
 # change label names to yes, no, rej
-label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+label_names = unique(predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 print(label_names)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("1", "yes", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("0", "no", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("Rejected", "rej", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 
 meta <- merged_seu_subset@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
-merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
+print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
 saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test2,"seu_Tissue_CD8T.rds")) 
+
 
 
 #### for test3 data
@@ -367,19 +375,20 @@ merged_seu_subset = readRDS(file = paste0(processed_dir_test3,"seu_PBMC_CD8T.rds
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test3.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
-colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+colnames(predicted_cell_labels_new) = c(paste0("PENCIL_pred_label_",phenotype_name))
 
 # change label names to yes, no, rej
-label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+label_names = unique(predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 print(label_names)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
-predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("1", "yes", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("0", "no", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
+predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]] <- gsub("Rejected", "rej", predicted_cell_labels_new[[paste0("PENCIL_pred_label_",phenotype_name)]])
 
 meta <- merged_seu_subset@meta.data
 meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
-merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
+print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
 saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3,"seu_PBMC_CD8T.rds")) 
 
@@ -392,10 +401,8 @@ saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3,"seu_PBMC_
 min_cellNum_per_patient = 50
 
 #### for training data
-phenotype_name = 'ResponseInfo'
 # load seurat object
 merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T.rds"))
-merged_seu_subset$meta = merged_seu_subset$patient
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
 keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
 merged_seu_subset = subset(merged_seu_subset, subset = meta %in% keep_patient)
@@ -403,28 +410,30 @@ sampleNUM = length(unique(merged_seu_subset$meta))
 print(paste('Total samples: ', sampleNUM))
 
 # Calculate the cell number for each patient
-grouped <- merged_seu_subset@meta.data %>% group_by(meta, PENCIL_pred_label)
+grouped <- merged_seu_subset@meta.data %>% group_by(meta, !!sym(paste0("PENCIL_pred_label_", phenotype_name)))
 # Calculate the number of cells for each patient and predicted_label
 cell_counts <- grouped %>% summarise(cell_count = n())
-cell_counts <- cell_counts[cell_counts$PENCIL_pred_label != "rej", ]
+cell_counts <- cell_counts[cell_counts[[paste0("PENCIL_pred_label_", phenotype_name)]] != "rej", ]
 # Create a vector with all unique patient IDs
 all_patients <- unique(cell_counts$meta)
-print(unique(merged_seu_subset$PENCIL_pred_label))
+print(unique(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_", phenotype_name)]]))
 
 unique_label = c("yes","no")
 # Create a new data frame with all patients having both 'yes' and 'no'
-new_df <- data.frame(meta = rep(all_patients, each = 2),
-                     PENCIL_pred_label = rep(unique_label, length(all_patients)))
+new_df <- data.frame(meta = rep(all_patients, each = 2))
+new_col_name <- paste0("PENCIL_pred_label_", phenotype_name)
+new_df[[new_col_name]] <- rep(unique_label, length(all_patients))
 # Merge the new data frame with the original data frame based on patient ID and 'yes_no'
-cell_counts_new <- merge(cell_counts, new_df, by = c("meta", "PENCIL_pred_label"), all = TRUE)
+cell_counts_new <- merge(cell_counts, new_df, by = c("meta", paste0("PENCIL_pred_label_", phenotype_name)), all = TRUE)
 # Replace missing values (NA) in the 'values' column with 0
 cell_counts_new$cell_count[is.na(cell_counts_new$cell_count)] <- 0
 # Calculate the total count for each patient
 df_totals <- aggregate(cell_count ~ meta, cell_counts_new, sum)
 # Calculate the count ratios for 'yes' and 'no'
-df_ratios <- aggregate(cell_count ~ meta + PENCIL_pred_label, cell_counts_new, sum)
-df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
+command = paste0('df_ratios <- aggregate(cell_count ~ meta + ',paste0("PENCIL_pred_label_", phenotype_name), ', cell_counts_new, sum)')
+eval(parse(text = command))
 
+df_ratios <- transform(df_ratios, ratio = cell_count / df_totals$cell_count * 100)
 phenotype_df = merged_seu_subset@meta.data[c('meta', phenotype_name)]
 duplicated_rows <- duplicated(phenotype_df[, 1])
 phenotype_df <- phenotype_df[!duplicated_rows, ]
@@ -435,7 +444,7 @@ df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
 
 # Plot the stacked bar plot
-ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
+ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label_ICBresponse)) + # paste0("PENCIL_pred_label_", phenotype_name)
   geom_bar(stat = "identity") +
   labs(x = NULL, y = "Percentage (%)", fill = "PENCIL-pred") +
   theme(
@@ -454,9 +463,10 @@ ggsave(filename = paste0(PENCIL_result_dir_deep, "stackedBar_cellRatio_train.pdf
 
 
 #### for test1 data
-phenotype_name = 'ResponseInfo'
+phenotype_name = 'ICBresponse'
 # load seurat object
 merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = subset(merged_seu_subset, subset = ICBresponse != 'Untreated')
 merged_seu_subset$meta= merged_seu_subset$sample
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
 keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]

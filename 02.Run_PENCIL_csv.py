@@ -22,7 +22,7 @@ embedding_fn = sys.argv[3] # '../02.Input/GSE200996/seu_Tissue_CD8T_embedding_um
 data_name = sys.argv[4] # 'GSE200996' 'GSE120575_Tissue_CD8T'
 phenotype = sys.argv[5] # 'ResponseInfo'
 mode = sys.argv[6] # 'multi-classification'  'regression'
-class_weight = float(eval(sys.argv[7])) # class_weights = [1.0, class_weight]
+class_weights = [float(eval(x)) for x in sys.argv[7].split(',')]
 exp_newdata_fn_list = sys.argv[8].split(',') # new test datasets, separates by ','
 
 print('************** Step 0: loading data ...')
@@ -40,7 +40,7 @@ if mode == 'multi-classification':
 else:
     labels = np.array(labels_raw.values, dtype=float)
 
-class_weights = [1.0, class_weight] # [1.0, 2.0] # None
+#class_weights = [1.0, class_weight] # [1.0, 2.0] # None
 
 print('Expression data (first 5*5):\n', data[0:5,0:5])
 if mode == 'multi-classification':
