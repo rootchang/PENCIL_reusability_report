@@ -105,10 +105,8 @@ seurat_obj <- CreateSeuratObject(counts = counts)
 
 # Create a new Seurat object with the un-normalized (counts per 10000) as counts
 seurat_obj[["RNA"]]@data <- exp(as.matrix(seurat_obj[["RNA"]]@data))-1 
-seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data) # 
-##### Add meta info. to seurat object
-seurat_obj_new <- AddMetaData(seurat_obj_new, seurat_obj@meta.data)
-seurat_obj_new <- NormalizeData(seurat_obj_new)
+seurat_obj_new <- CreateSeuratObject(counts = seurat_obj[["RNA"]]@data) # un-normalized data 
+seurat_obj_new <- NormalizeData(seurat_obj_new) # log-normalization
 seurat_obj = seurat_obj_new
 
 rm(seurat_obj_new)

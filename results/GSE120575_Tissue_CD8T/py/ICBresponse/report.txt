@@ -1,0 +1,25 @@
+Number of examples rejected=2981/6350.
+num_of_rejcted
+0                 1930
+1                 1051
+Name: count, dtype: int64
+--- without rejection ---
+              precision    recall  f1-score   support
+
+           0       0.88      0.73      0.80      4301
+           1       0.59      0.80      0.68      2049
+
+    accuracy                           0.75      6350
+   macro avg       0.74      0.77      0.74      6350
+weighted avg       0.79      0.75      0.76      6350
+
+              precision    recall  f1-score   support
+
+           0       1.00      0.99      1.00      2371
+           1       0.99      0.99      0.99       998
+
+    accuracy                           0.99      3369
+   macro avg       0.99      0.99      0.99      3369
+weighted avg       0.99      0.99      0.99      3369
+
+---test time: 2.193810224533081 seconds ---
