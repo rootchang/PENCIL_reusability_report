@@ -135,7 +135,7 @@ fig_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/",
 # Reduce phenotype info to seurat object
 ```{r}
 
-sampleType_name = 'PBMC' # PBMC Tissue
+sampleType_name = 'Tissue' # PBMC Tissue
 
 merged_seu = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,".rds"))
 
@@ -204,18 +204,27 @@ celltypist --indata /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/
 prediction_labels <- read.csv(paste0(processed_dir, sampleType_name,"_celltypist_ImmuneAllLow_predicted_labels.csv"), row.names = 1)
 merged_seu$cell_type_celltypist <- prediction_labels['majority_voting']
 
-```
-
-# extract CD8T cells
-```{r}
-
-merged_seu$CD8T_cell <- ifelse(grepl("cytotoxic T|MAIT", merged_seu$cell_type_celltypist, ignore.case = TRUE), "CD8+ T-cells", "Other")
-
-merged_seu_subset <- subset(merged_seu, subset = CD8T_cell == "CD8+ T-cells")
-
 saveRDS(merged_seu, file = paste0(processed_dir,"seu_",sampleType_name,".rds"))
 
-saveRDS(merged_seu_subset, file = paste0(processed_dir,"seu_",sampleType_name,"_CD8T.rds"))
+```
+
+# extract cells of interest
+```{r}
+
+sampleType_name = 'PBMC' # PBMC Tissue
+
+merged_seu = readRDS(file = paste0(processed_dir, "seu_",sampleType_name,".rds")) 
+
+## CD8T cells
+merged_seu$CD8T_cell <- ifelse(grepl("cytotoxic T|MAIT", merged_seu$cell_type_celltypist, ignore.case = TRUE), "CD8+ T-cells", "Other")
+merged_seu_CD8T <- subset(merged_seu, subset = CD8T_cell == "CD8+ T-cells")
+saveRDS(merged_seu_CD8T, file = paste0(processed_dir,"seu_",sampleType_name,"_CD8T.rds"))
+
+## B cells
+merged_seu$B_cell <- ifelse(grepl("B cells|Plasma", merged_seu$cell_type_celltypist, ignore.case = F), "B-cells", "Other")
+merged_seu_B <- subset(merged_seu, subset = B_cell == "B-cells")
+saveRDS(merged_seu_B, file = paste0(processed_dir,"seu_",sampleType_name,"_B.rds"))
+
 
 ```
 
@@ -223,13 +232,13 @@ saveRDS(merged_seu_subset, file = paste0(processed_dir,"seu_",sampleType_name,"_
 # merge CD8T seurat objects of tumor and blood
 ```{r}
 
-seu_Tissue = readRDS(file=paste0(processed_dir, "seu_Tissue_CD8T.rds"))
+cell_of_interest = 'B' # CD8T B
 
-seu_PBMC = readRDS(file=paste0(processed_dir, "seu_PBMC_CD8T.rds"))
-
+seu_Tissue = readRDS(file=paste0(processed_dir, "seu_Tissue_",cell_of_interest,".rds"))
+seu_PBMC = readRDS(file=paste0(processed_dir, "seu_PBMC_",cell_of_interest,".rds"))
 merged_seu = merge(seu_Tissue,seu_PBMC)
 
-saveRDS(merged_seu, file = paste0(processed_dir,"seu_all_CD8T.rds"))
+saveRDS(merged_seu, file = paste0(processed_dir,"seu_all_",cell_of_interest,".rds"))
 
 ```
 

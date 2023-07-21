@@ -159,7 +159,7 @@ seurat_obj_CD8T <- subset(seurat_obj, subset = CD8T_cell == "CD8+ T-cells")
 
 #saveRDS(seurat_obj_CD8T, file = paste0(processed_dir,"seu_",sampleType_name,"_CD8T.rds"))
 
-saveRDS(seurat_obj_CD8T, file = paste0(processed_dir,"seu_CD8T.rds"))
+saveRDS(seurat_obj_CD8T, file = paste0(processed_dir,"seu_all_CD8T.rds"))
 
 ```
 

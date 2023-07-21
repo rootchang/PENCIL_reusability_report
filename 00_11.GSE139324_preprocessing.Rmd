@@ -137,22 +137,29 @@ saveRDS(object = seurat_obj, file = paste0(processed_dir, "seu_all_raw.rds"))
 ```
 
 
-# extract CD8T cells
+# extract cells of interest
 ```{r}
 
 seurat_obj = readRDS(file = paste0(processed_dir, "seu_all_raw.rds")) 
 
 seurat_obj$CD8T_cell <- ifelse(grepl("CD8", seurat_obj$cell_type, ignore.case = TRUE), "CD8+ T-cells", "Other")
-
 seurat_obj_CD8T <- subset(seurat_obj, subset = CD8T_cell == "CD8+ T-cells")
 
+# CD8T cells from both tumor and PBMC (exclude healthy)
 seurat_obj_CD8T_disease <- subset(seurat_obj_CD8T, subset = disease == "HNSCC")
 saveRDS(seurat_obj_CD8T_disease, file = paste0(processed_dir,"seu_all_CD8T.rds"))
 
+# CD8T cells from tumor
 seurat_obj_CD8T_tumor <- subset(seurat_obj_CD8T, subset = tissue == "TIL")
-
 saveRDS(seurat_obj_CD8T_tumor, file = paste0(processed_dir,"seu_Tumor_CD8T.rds"))
 
+
+seurat_obj$B_cell <- ifelse(grepl("B|Plasma", seurat_obj$cell_type, ignore.case = F), "B-cells", "Other")
+seurat_obj_B <- subset(seurat_obj, subset = B_cell == "B-cells")
+
+# B cells from both tumor and PBMC
+seurat_obj_B_disease <- subset(seurat_obj_B, subset = disease == "HNSCC")
+saveRDS(seurat_obj_B_disease, file = paste0(processed_dir,"seu_all_B.rds"))
 
 
 ```

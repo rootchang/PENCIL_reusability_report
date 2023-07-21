@@ -137,17 +137,16 @@ saveRDS(object = seurat_obj, file = paste0(processed_dir, "seu_",sampleType_name
 ```
 
 
-# extract tumor samples and CD8T cells
+# extract cells of interest
 ```{r}
 
+seurat_obj = readRDS(file = paste0(processed_dir, "seu_",sampleType_name,"_all_raw.rds")) 
+print(unique(seurat_obj$cell_type))
+
+# CD8T cells
 seurat_obj$CD8T_cell <- ifelse(grepl("CD8", seurat_obj$cell_type, ignore.case = TRUE), "CD8+ T-cells", "Other")
-
 seurat_obj_CD8T <- subset(seurat_obj, subset = CD8T_cell == "CD8+ T-cells")
-
-#seurat_obj_CD8T_tumor <- subset(seurat_obj_CD8T, subset = tissue == "Tumor") # contain both tumor and 
-
 saveRDS(seurat_obj_CD8T, file = paste0(processed_dir,"seu_",sampleType_name,"_CD8T.rds"))
 
 ```
-
 

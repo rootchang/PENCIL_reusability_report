@@ -179,19 +179,28 @@ merged_seu = merge(seu_Tissue_new,seu_PBMC_new)
 ```
 
 
-
-
-# extract CD8T cells
+# extract cells of interest
 ```{r}
 
+merged_seu = readRDS(file = paste0(processed_dir, "seu_all3samples.rds")) 
+merged_seu$HPV = 1
+merged_seu$sex = 1
+merged_seu$smoking = 1
+merged_seu$alcohol = 1
+merged_seu$age = 55
+merged_seu$age[merged_seu$patient=='HN16'] = 45
+
+print(unique(merged_seu$cell_type_celltypist))
+
+# CD8T cells
 merged_seu$CD8T_cell <- ifelse(grepl("cytotoxic T|MAIT", merged_seu$cell_type_celltypist, ignore.case = TRUE), "CD8+ T-cells", "Other")
+merged_seu_CD8T <- subset(merged_seu, subset = CD8T_cell == "CD8+ T-cells")
+saveRDS(merged_seu_CD8T, file = paste0(processed_dir,"seu_all3samples_CD8T.rds"))
 
-merged_seu_subset <- subset(merged_seu, subset = CD8T_cell == "CD8+ T-cells")
+# B cells
+merged_seu$B_cell <- ifelse(grepl("B cells|Plasma", merged_seu$cell_type_celltypist, ignore.case = F), "B-cells", "Other")
+merged_seu_B <- subset(merged_seu, subset = B_cell == "B-cells")
+saveRDS(merged_seu_B, file = paste0(processed_dir,"seu_all3samples_B.rds"))
 
-saveRDS(merged_seu, file = paste0(processed_dir,"seu_all3samples.rds"))
-
-saveRDS(merged_seu_subset, file = paste0(processed_dir,"seu_all_CD8T.rds"))
 
 ```
-
-
