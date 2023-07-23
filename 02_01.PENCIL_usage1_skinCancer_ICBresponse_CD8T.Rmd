@@ -71,6 +71,7 @@ library(patchwork)
 library(edgeR)
 library(RColorBrewer)
 library(stringr)
+library(pROC)
 
 ```
 
@@ -105,13 +106,16 @@ fig_dir_test3 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Resu
 ```{r}
 
 sampleType_name = 'Tissue'
-phenotype_name = 'ResponseInfo'
+phenotype_name = 'ICBresponse'
 cellType_of_interest = 'CD8T'
 
+
+#merged_seu = readRDS(file = paste0(processed_dir_train,"seu_",sampleType_name,"_all.rds"))
+#merged_seu_subset <- subset(merged_seu, subset = cell_type_originalCD8T %in% c("CD8+ T-cells"))
 merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))
 
 #### print cell number for each phenotype, used for class_weights setting
-print(table(merged_seu_subset$ResponseInfo))
+print(table(merged_seu_subset$ICBresponse))
 
 # filter genes to keep only protein coding genes
 protein_coding_gene_file = paste0(shared_data_dir, 'Feldman_protein_coding_genes.csv')
@@ -122,21 +126,27 @@ merged_seu_subset <- merged_seu_subset[genes, ]
 merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
 ### default gene order by variance (high to low)
 variable_genes <- VariableFeatures(merged_seu_subset)
-merged_seu_subset <- ScaleData(merged_seu_subset)
+merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
+merged_seu_subset <- ScaleData(merged_seu_subset) # default scale.max = 10,
 merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
 merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
 merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
 merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
 
+# exp_data = as.matrix(merged_seu_subset@assays[["RNA"]]@data[variable_genes,])
+# exp_data_scale_t = scale(t(exp_data))
+# scaled_center_train <- attr(exp_data_scale_t, "scaled:center")
+# scaled_scale_train <- attr(exp_data_scale_t,"scaled:scale")
+# exp_data_scaled <- t(exp_data_scale_t)
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
-write.csv(exp_data_scaled, file=paste0(processed_dir_train,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
+write.csv(exp_data_scaled, file=paste0(processed_dir_train,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
 cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
-write.csv(cell_label_df, file=paste0(processed_dir_train,"cell_label_info.csv"))
+write.csv(cell_label_df, file=paste0(processed_dir_train,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,"_cell_label_info.csv"))
 emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
-write.csv(emd, file=paste0(processed_dir_train, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
+write.csv(emd, file=paste0(processed_dir_train, "seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,'_embedding_umap.csv'))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train, "seu_",sampleType_name,"_", cellType_of_interest,'_',phenotype_name, "_PENCIL.rds")) 
 
 ```
 
@@ -144,7 +154,7 @@ saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train, "seu_",sa
 ```{r}
 
 sampleType_name = 'Tissue'
-phenotype_name = 'ResponseInfo'
+phenotype_name = 'ICBresponse'
 cellType_of_interest = 'CD8T'
 
 merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_",sampleType_name,"_",cellType_of_interest,".rds"))
@@ -167,20 +177,22 @@ if (num_fill_genes > 0){
 VariableFeatures(merged_seu_subset) <- variable_genes
 merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
 merged_seu_subset <- ScaleData(object=merged_seu_subset)
-merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
-merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
-merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
-merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
+# merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
+# merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
+# merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
+# merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
-
+# exp_data_new = as.matrix(merged_seu_subset@assays[["RNA"]]@data[variable_genes,])
+# exp_data_scale_t_new = scale(t(exp_data_new), center=scaled_center_train, scale=scaled_scale_train)
+# exp_data_scaled <- t(exp_data_scale_t_new)
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
-write.csv(exp_data_scaled, file=paste0(processed_dir_test1,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
-cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
-write.csv(cell_label_df, file=paste0(processed_dir_test1,"cell_label_info.csv"))
-emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
-write.csv(emd, file=paste0(processed_dir_test1, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
+write.csv(exp_data_scaled, file=paste0(processed_dir_test1,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
+# cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
+# write.csv(cell_label_df, file=paste0(processed_dir_test1,"cell_label_info.csv"))
+# emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+# write.csv(emd, file=paste0(processed_dir_test1, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1, "seu_",sampleType_name,"_", cellType_of_interest,'_',phenotype_name,"_PENCIL.rds")) 
 
 ```
 
@@ -209,20 +221,24 @@ if (num_fill_genes > 0){
 VariableFeatures(merged_seu_subset) <- variable_genes
 merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
 merged_seu_subset <- ScaleData(object=merged_seu_subset)
-merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
-merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
-merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
-merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
-
+# merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
+# merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
+# merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
+# merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
 
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
-write.csv(exp_data_scaled, file=paste0(processed_dir_test2,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
-cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
-write.csv(cell_label_df, file=paste0(processed_dir_test2,"cell_label_info.csv"))
-emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
-write.csv(emd, file=paste0(processed_dir_test2, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
+write.csv(exp_data_scaled, file=paste0(processed_dir_test2,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
+# cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
+# write.csv(cell_label_df, file=paste0(processed_dir_test2,"cell_label_info.csv"))
+# emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+# write.csv(emd, file=paste0(processed_dir_test2, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test2, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL.rds")) 
+# exp_data_new = as.matrix(merged_seu_subset@assays[["RNA"]]@data[variable_genes,])
+# exp_data_scale_t_new = scale(t(exp_data_new), center=scaled_center_train, scale=scaled_scale_train)
+# exp_data_scaled <- t(exp_data_scale_t_new)
+# write.csv(exp_data_scaled, file=paste0(processed_dir_test2,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test2, "seu_",sampleType_name,"_", cellType_of_interest,'_',phenotype_name, "_PENCIL.rds")) 
 
 ```
 
@@ -258,20 +274,24 @@ if (num_fill_genes > 0){
 VariableFeatures(merged_seu_subset) <- variable_genes
 merged_seu_subset <- NormalizeData(object=merged_seu_subset, normalization.method="LogNormalize")
 merged_seu_subset <- ScaleData(object=merged_seu_subset)
-merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
-merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
-merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
-merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
-
-
+# merged_seu_subset <- RunPCA(object=merged_seu_subset, features=variable_genes)
+# merged_seu_subset <- FindNeighbors(object=merged_seu_subset, dims=1:10, k.param=20)
+# merged_seu_subset <- FindClusters(object=merged_seu_subset, resolution=1.6)
+# merged_seu_subset <- RunUMAP(object=merged_seu_subset, dims=1:10)
+# 
 exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
-write.csv(exp_data_scaled, file=paste0(processed_dir_test3,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
-cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
-write.csv(cell_label_df, file=paste0(processed_dir_test3,"cell_label_info.csv"))
-emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
-write.csv(emd, file=paste0(processed_dir_test3, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
+write.csv(exp_data_scaled, file=paste0(processed_dir_test3,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
+# cell_label_df = data.frame(label = merged_seu_subset@meta.data[phenotype_name])
+# write.csv(cell_label_df, file=paste0(processed_dir_test3,"cell_label_info.csv"))
+# emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+# write.csv(emd, file=paste0(processed_dir_test3, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3, "seu_",sampleType_name,"_", cellType_of_interest, "_PENCIL.rds")) 
+# exp_data_new = as.matrix(merged_seu_subset@assays[["RNA"]]@data[variable_genes,])
+# exp_data_scale_t_new = scale(t(exp_data_new), center=scaled_center_train, scale=scaled_scale_train)
+# exp_data_scaled <- t(exp_data_scale_t_new)
+# write.csv(exp_data_scaled, file=paste0(processed_dir_test3,"seu_",sampleType_name,'_',cellType_of_interest,'_',phenotype_name,".csv"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3, "seu_",sampleType_name,"_", cellType_of_interest,'_',phenotype_name, "_PENCIL.rds")) 
 
 ```
 
@@ -284,7 +304,7 @@ sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
 module load python/3.8
 
 ## Run PENCIL with .csv files as input, which seems work well
-python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T.csv
+python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T_ICBresponse.csv
 
 ```
 
@@ -297,7 +317,7 @@ PENCIL_result_dir_deep = paste0(PENCIL_result_dir, 'GSE120575_Tissue_CD8T/py/',p
 
 #### for training data
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds"))
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
@@ -316,12 +336,12 @@ merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
 print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train,"seu_Tissue_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds")) 
 
 
 #### for test1 data
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds"))
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test1.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
@@ -340,13 +360,13 @@ merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
 print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1,"seu_Tissue_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds")) 
 
 
 
 #### for test2 data
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds"))
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test2.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
@@ -365,13 +385,13 @@ merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
 print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test2,"seu_Tissue_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test2,"seu_Tissue_CD8T_ICBresponse_PENCIL.rds")) 
 
 
 
 #### for test3 data
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test3,"seu_PBMC_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test3,"seu_PBMC_CD8T_ICBresponse_PENCIL.rds"))
 
 predicted_cell_labels = read.csv(paste0(PENCIL_result_dir_deep, 'predicted_labels_test3.csv'))
 predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
@@ -390,7 +410,7 @@ merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]] <- factor(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]], levels = c("yes", "no", "rej"))
 print(table(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_",phenotype_name)]]))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3,"seu_PBMC_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3,"seu_PBMC_CD8T_ICBresponse_PENCIL.rds")) 
 
 ```
 
@@ -398,13 +418,13 @@ saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test3,"seu_PBMC_
 # Calculate R/NR cell number and ratios in each patient for all training and test datasets
 ```{r}
 
-min_cellNum_per_patient = 50
+min_cellNum_per_sample = 50
 
 #### for training data
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
-keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
+keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_sample]
 merged_seu_subset = subset(merged_seu_subset, subset = meta %in% keep_patient)
 sampleNUM = length(unique(merged_seu_subset$meta))
 print(paste('Total samples: ', sampleNUM))
@@ -443,6 +463,17 @@ df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
 
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label_ICBresponse=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$ICBresponse, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$ICBresponse == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
+
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label_ICBresponse)) + # paste0("PENCIL_pred_label_", phenotype_name)
   geom_bar(stat = "identity") +
@@ -465,11 +496,11 @@ ggsave(filename = paste0(PENCIL_result_dir_deep, "stackedBar_cellRatio_train.pdf
 #### for test1 data
 phenotype_name = 'ICBresponse'
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
 merged_seu_subset = subset(merged_seu_subset, subset = ICBresponse != 'Untreated')
 merged_seu_subset$meta= merged_seu_subset$sample
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
-keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
+keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_sample]
 merged_seu_subset = subset(merged_seu_subset, subset = meta %in% keep_patient)
 sampleNUM = length(unique(merged_seu_subset$meta))
 print(paste('Total samples: ', sampleNUM))
@@ -505,6 +536,11 @@ df_ratios <- merge(df_ratios, phenotype_df, by.x = "meta", by.y = "meta")
 df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
+
+roc_curve <- roc(df_ratios_yes$ICBresponse, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$ICBresponse == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
@@ -529,9 +565,9 @@ ggsave(filename = paste0(PENCIL_result_dir_deep, "stackedBar_cellRatio_test1.pdf
 #### for test2 data
 phenotype_name = 'ICBresponse'
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_Tissue_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test2,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
-keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
+keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_sample]
 merged_seu_subset = subset(merged_seu_subset, subset = meta %in% keep_patient)
 sampleNUM = length(unique(merged_seu_subset$meta))
 print(paste('Total samples: ', sampleNUM))
@@ -567,6 +603,17 @@ df_ratios <- merge(df_ratios, phenotype_df, by.x = "meta", by.y = "meta")
 df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$ICBresponse, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$ICBresponse == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
@@ -590,9 +637,9 @@ ggsave(filename = paste0(PENCIL_result_dir_deep, "stackedBar_cellRatio_test2.pdf
 #### for test3 data
 phenotype_name = 'ICBresponse'
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_test3,"seu_PBMC_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_test3,"seu_PBMC_CD8T_",phenotype_name,"_PENCIL.rds"))
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
-keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
+keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_sample]
 merged_seu_subset = subset(merged_seu_subset, subset = meta %in% keep_patient)
 sampleNUM = length(unique(merged_seu_subset$meta))
 print(paste('Total samples: ', sampleNUM))
@@ -628,6 +675,17 @@ df_ratios <- merge(df_ratios, phenotype_df, by.x = "meta", by.y = "meta")
 df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$ICBresponse==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$ICBresponse, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$ICBresponse == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +

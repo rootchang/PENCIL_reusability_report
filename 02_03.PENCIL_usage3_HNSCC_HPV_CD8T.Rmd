@@ -315,7 +315,7 @@ meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output do
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train,"seu_Tumor_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_train,"seu_Tumor_CD8T_HPV_PENCIL.rds")) 
 
 
 #### for test1 data
@@ -338,7 +338,7 @@ meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output do
 merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
 merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
 
-saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1,"seu_Tumor_CD8T.rds")) 
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir_test1,"seu_Tumor_CD8T_HPV_PENCIL.rds")) 
 
 
 #### for test2 data
@@ -397,7 +397,7 @@ min_cellNum_per_patient = 50
 #### for training data
 phenotype_name = 'HPV'
 # load seurat object
-merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tumor_CD8T.rds"))
+merged_seu_subset = readRDS(file = paste0(processed_dir_train,"seu_Tumor_CD8T_HPV_PENCIL.rds"))
 merged_seu_subset$meta = merged_seu_subset$patient
 patient_CD8Tcell_num = sort(table(merged_seu_subset$meta))
 keep_patient = names(patient_CD8Tcell_num)[patient_CD8Tcell_num > min_cellNum_per_patient]
@@ -436,6 +436,17 @@ df_ratios <- merge(df_ratios, phenotype_df, by.x = "meta", by.y = "meta")
 df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste('HPV+ sample number: ', sum(df_ratios$HPV==1)/2))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$HPV==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$HPV==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$HPV, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$HPV == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +
@@ -497,6 +508,17 @@ df_ratios <- merge(df_ratios, phenotype_df, by.x = "meta", by.y = "meta")
 df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste('HPV+ sample number: ', sum(df_ratios$HPV==1)/2))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$HPV==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$HPV==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$HPV, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$HPV == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label)) +

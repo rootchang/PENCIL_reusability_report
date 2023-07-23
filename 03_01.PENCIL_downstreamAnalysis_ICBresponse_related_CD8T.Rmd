@@ -1,0 +1,482 @@
+---
+title: "Pre-process the data for PENCIL input"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r}
+# clear all objects including hidden objects
+rm(list = ls(all.names = TRUE)) 
+# free up memory and report the memory usage
+gc()
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE)
+require(ggplot2)
+ggplot2::theme_set(new = theme_bw(base_size = 12)) # sets the theme and axis font size
+```
+
+# Connect to server
+```{bash}
+ssh changt7@biowulf.nih.gov
+sinteractive --mem=64g --cpus-per-task=32 --time=24:00:00
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+# --gres=lscratch:1024
+module load R/
+R
+
+```
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+#BiocManager::install("GSVA")
+library(GSVA)
+library(pROC)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+phenotype_name = 'ICBresponse'
+
+# server
+shared_data_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/02.Input/")
+PENCIL_result_dir = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/01.Scripts/results/")
+PENCIL_result_dir_deep = paste0(PENCIL_result_dir, 'GSE120575_Tissue_CD8T/py/',phenotype_name,'/')
+
+dataset_train = 'GSE120575'
+processed_dir_train <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_train, '/')
+fig_dir_train = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_train, "/Figures/")
+
+dataset_test1 = 'GSE123813'
+processed_dir_test1 <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test1, '/')
+fig_dir_test1 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test1, "/Figures/")
+
+dataset_test2 = 'GSE166181'
+processed_dir_test2 <- paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test2, '/')
+fig_dir_test2 = paste0("/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/", dataset_test2, "/Figures/")
+
+
+```
+
+
+# Identify DEGs for PENCIL N/NR cells on training data
+```{r}
+
+logFCfilter = 0.25 # 0.5
+adjPvalFilter = 0.05
+
+# loading seurat object of training data
+merged_seu = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
+
+##### find all markers for PENCIL predicted labels
+Idents(object = merged_seu) <- merged_seu@meta.data$'PENCIL_pred_label_ICBresponse'
+Cells.markers = FindAllMarkers(merged_seu, only.pos=T, min.pct=0.25, logfc.threshold = logFCfilter)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+
+sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))) > logFCfilter & 
+                               as.numeric(as.vector(Cells.markers$p_val_adj)) < adjPvalFilter), ]
+
+write.csv(sig.markers, paste0(processed_dir, "sig.markers_PENCILpredLabel_",sampleType_name, '_', cellType_of_interest,".csv"))
+
+##### Keep only the top N genes for each PENCIL predicted label, ranked by logFC
+topN = 5
+TopN.markers <- sig.markers %>%
+    group_by(cluster) %>%
+    top_n(topN, avg_log2FC)
+
+R_markerGenes = TopN.markers$gene[TopN.markers$cluster=='yes']
+NR_markerGenes = TopN.markers$gene[TopN.markers$cluster=='no']
+
+### marker genes from PENCIL paper (much worse due to wrong processing of data)
+# R_markerGenes = c("IL7R", "GPR183", "CCR7", "NR4A2", "LMNA", "NR4A3", "CD55", "MGAT4A", "PER1", "TSPYL2", "FOXP1", "STAT4")
+# NR_markerGenes = c("CD38", "CCL3", "VCAM1", "HAVCR2", "CCR5", "GOLIM4", "PRDX3", "LGALS9", "ENTPD1", "TRAFD1", "PDCD1", "BATF", "LAG3", "CTLA4", "PTPN6", "CXCR6")
+# R_markerGenes = R_markerGenes[1:5]
+# NR_markerGenes = NR_markerGenes[1:5]
+```
+
+# plot dotplot for the topN marker genes
+```{r}
+
+merged_seu_sub = subset(merged_seu, subset = PENCIL_pred_label_ICBresponse != "rej")
+merged_seu_sub$PENCIL_pred_label_ICBresponse = as.character(merged_seu_sub$PENCIL_pred_label_ICBresponse)
+merged_seu_sub$PENCIL_pred_label_ICBresponse[merged_seu_sub$PENCIL_pred_label_ICBresponse=='no'] = 'Non-responder'
+merged_seu_sub$PENCIL_pred_label_ICBresponse[merged_seu_sub$PENCIL_pred_label_ICBresponse=='yes'] = 'Responder'
+
+p <- DotPlot(merged_seu_sub, 
+             features = c(R_markerGenes,NR_markerGenes), 
+             group.by = "PENCIL_pred_label_ICBresponse",
+             cols = c("lightgrey", "red")) + 
+  labs(x="", y="")+
+  #coord_flip()+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, color = "black", size = 15),
+        axis.text.y = element_text(color = "black", size = 15),
+        legend.position = c(1.25, 0.3),
+        legend.key.height = unit(5, "mm"),
+        plot.margin = margin(t = 1, r = 40, b = 1, l = 1, unit = "mm"))
+ggsave(filename = paste0(PENCIL_result_dir_deep, "Dotplot_TopNmarkers_train.pdf"), plot = p, height = 30*2.5, width = 40*4, units = "mm")
+
+
+```
+
+
+# Use marker gene GSVA score to predict ICB response in 1) the training set (using CD8T pseudo-bulk) and 2) test sets (using CD8T pseudo-bulk)
+```{r}
+
+min_cellNum_per_sample = 50
+
+gene_set_list <- list(
+  GeneSet1 = R_markerGenes,
+  GeneSet2 = NR_markerGenes
+)
+
+result_list = list() # store GSVA score and ICB response info of different datasets
+
+#### 1) the training set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_train,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+response <- ifelse(gsva_scores$ICBresponse > 0, 1, 0) 
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['train']] = data.frame(ICBresponse = response, GSVAscore = predictor)
+
+
+
+#### 2) the test1 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test1,"seu_Tissue_CD8T_",phenotype_name,"_PENCIL.rds"))
+#merged_seu$meta = merged_seu$patient
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+response <- ifelse(gsva_scores$ICBresponse > 0, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test1']] = data.frame(ICBresponse = response, GSVAscore = predictor)
+
+
+
+#### 3) the test2 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test2,"seu_PBMC_CD8T_",phenotype_name,"_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+response <- ifelse(gsva_scores$ICBresponse > 0, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test2']] = data.frame(ICBresponse = response, GSVAscore = predictor)
+
+ROC_list <- lapply(result_list, function(df) {
+  roc_curve <- roc(df$ICBresponse, df$GSVAscore)
+  auc_value <- auc(roc_curve)
+  acc_value = mean(df$ICBresponse == (df$GSVAscore>0))
+  return(list(roc_curve = roc_curve, auc_value = auc_value, acc_value = acc_value))
+})
+
+
+
+#### Plot the ROC curves and AUC values
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_ROC.pdf"),height = 2.5, width = 2.5) 
+ggplot() +
+  #theme_minimal() +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"))+
+  #theme(legend.position = "bottom") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "1 - Specificity", y = "Sensitivity") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  geom_line(data = data.frame(specificity=ROC_list[[1]]$roc_curve$sensitivities, sensitivity=ROC_list[[1]]$roc_curve$specificities), aes(x = 1 - specificity, y = sensitivity), color = "black", linetype = "solid", linewidth = 1) +
+  geom_line(data = data.frame(specificity=ROC_list[[2]]$roc_curve$sensitivities, sensitivity=ROC_list[[2]]$roc_curve$specificities), aes(x = 1 - specificity, y = sensitivity), color = "#FD3A4A", linetype = "solid", linewidth = 1) +
+  geom_line(data = data.frame(specificity=ROC_list[[3]]$roc_curve$sensitivities, sensitivity=ROC_list[[3]]$roc_curve$specificities), aes(x = 1 - specificity, y = sensitivity), color = "#1F8A70", linetype = "solid", linewidth = 1) +
+  geom_text(data = data.frame(specificity=ROC_list[[1]]$roc_curve$sensitivities, sensitivity=ROC_list[[1]]$roc_curve$specificities), aes(x = 0.6, y = 0.3, label = paste("AUC (train) =", round(ROC_list[[1]]$auc_value, 2))), color = "black",fontface = "plain") +
+  geom_text(data = data.frame(specificity=ROC_list[[2]]$roc_curve$sensitivities, sensitivity=ROC_list[[2]]$roc_curve$specificities), aes(x = 0.6, y = 0.2, label = paste("AUC (test1) =", round(ROC_list[[2]]$auc_value, 2))), color = "#FD3A4A",fontface = "plain") +
+  geom_text(data = data.frame(specificity=ROC_list[[3]]$roc_curve$sensitivities, sensitivity=ROC_list[[3]]$roc_curve$specificities), aes(x = 0.6, y = 0.1, label = paste("AUC (test2) =", round(ROC_list[[3]]$auc_value, 2))), color = "#1F8A70",fontface = "plain")#+
+  #scale_color_manual(values = c("blue", "red", "green"), labels = c("Train", "Test1", "Test2"))
+dev.off()
+
+
+
+### boxplot of GSVA scores in R and NR samples
+combined_df <- do.call(rbind, result_list)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_boxplot.pdf"),height = 2.5*0.7, width = 2.5*1) 
+ggplot() +
+  geom_boxplot(data = result_list[[1]], aes(x = factor(ICBresponse, level=c(1,0)), y = GSVAscore, fill = factor(ICBresponse, level=c(1,0)))) +
+  geom_boxplot(data = result_list[[2]], aes(x = factor(ICBresponse+2, level=c(3,2)), y = GSVAscore, fill = factor(ICBresponse, level=c(1,0)))) +
+  geom_boxplot(data = result_list[[3]], aes(x = factor(ICBresponse+4, level=c(5,4)), y = GSVAscore, fill = factor(ICBresponse, level=c(1,0)))) +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none")
+dev.off()
+
+print(wilcox.test(result_list[[1]]$GSVAscore[result_list[[1]]$ICBresponse==1], result_list[[1]]$GSVAscore[result_list[[1]]$ICBresponse==0], alternative = "greater"))
+print(wilcox.test(result_list[[2]]$GSVAscore[result_list[[2]]$ICBresponse==1], result_list[[2]]$GSVAscore[result_list[[2]]$ICBresponse==0], alternative = "greater"))
+print(wilcox.test(result_list[[3]]$GSVAscore[result_list[[3]]$ICBresponse==1], result_list[[3]]$GSVAscore[result_list[[3]]$ICBresponse==0], alternative = "greater"))
+
+```
+
+
+
+
+
+
+
+# Use marker gene GSVA score to predict ICB response in other cancer types (using CD8T pseudo-bulk). Conlcusion: not work
+```{r}
+
+#### HNSCC GSE200996
+phenotype_name = 'RECIST_response' # Any_response  RECIST_response
+#### 4) the test4 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test4,"seu_Tissue_CD8T.rds"))
+#merged_seu$meta = merged_seu$patient
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+if (phenotype_name == "RECIST_response"){
+  phenotype_df = subset(phenotype_df, subset = RECIST_response!="not measurable")
+}
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# Calculate AUC using pROC package
+if (phenotype_name == "RECIST_response"){
+  response <- ifelse(gsva_scores[[phenotype_name]] == 'response', 1, 0) # RECIST
+}else{
+  response <- ifelse(gsva_scores[[phenotype_name]] == 'yes', 1, 0) # Anyreponse 
+}
+predictor = as.numeric(gsva_scores$GSVA_diff)
+roc_obj <- roc(response, predictor, direction="<")
+# Print the AUC value
+auc_value <- auc(roc_obj)
+print(paste("ICB prediction AUC for test4 data: ",auc_value[1]))
+
+
+# Plot the ROC curve
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_ROC_test3.pdf"),height = 2.5, width = 2.5) 
+ggroc(roc_obj, legacy.axes = TRUE) +
+  geom_text(aes(x = 0.7, y = 0.1, 
+                label = paste0("AUC = ", round(auc_value, 2))),
+            color = "black") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black")) +
+  xlab("1 - Specificity") + 
+  ylab("Sensitivity")
+dev.off()
+
+
+```
+
+
+# Use marker gene GSVA score to predict ICB response in bulk RNAseq of skin cancer. Conlcusion: not work
+```{r}
+
+#### Data (n=121): Liu, D., Schilling, B., Liu, D. et al. Integrative molecular and clinical modeling of clinical outcomes to PD1 blockade in patients with metastatic melanoma. Nat Med 25, 1916–1927 (2019). https://doi.org/10.1038/s41591-019-0654-5
+
+raw_exp_fn = "/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/Liu_melanoma_bulk/41591_2019_654_MOESM3_ESM.txt"
+exp_mat = read.csv(raw_exp_fn, sep='\t', header=T, row.names = 1)
+pseudobulk_mat = t(scale(exp_mat)) # scale works for each column
+print(colnames(pseudobulk_mat))
+
+# extract phenotype for each sample
+clinic_info_fn = "/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/Liu_melanoma_bulk/clinicInfo.csv"
+clinic_info = read.csv(clinic_info_fn, header = T, row.names = 1)
+clinic_info$meta = row.names(clinic_info)
+phenotype_df = clinic_info[c("meta", "BR")]
+phenotype_df$BR[phenotype_df$BR=="CR"] = 1
+phenotype_df$BR[phenotype_df$BR=="PR"] = 1
+phenotype_df$BR[phenotype_df$BR=="PD"] = 0
+phenotype_df$BR[phenotype_df$BR=="SD"] = 0
+phenotype_df$BR[phenotype_df$BR=="MR"] = 0
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# Calculate AUC using pROC package
+response <- ifelse(gsva_scores$BR > 0.5, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+roc_obj <- roc(response, predictor, direction="<")
+# Print the AUC value
+auc_value <- auc(roc_obj)
+print(paste("ICB prediction AUC for test5 data: ",auc_value[1]))
+
+
+# Plot the ROC curve
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_ROC_test3.pdf"),height = 2.5, width = 2.5) 
+ggroc(roc_obj, legacy.axes = TRUE) +
+  geom_text(aes(x = 0.7, y = 0.1, 
+                label = paste0("AUC = ", round(auc_value, 2))),
+            color = "black") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black")) +
+  xlab("1 - Specificity") + 
+  ylab("Sensitivity")
+dev.off()
+
+
+```

@@ -445,6 +445,17 @@ df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
 
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$sex==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$sex==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$sex, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$sex == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
+
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label_sex)) + # paste0("PENCIL_pred_label_", phenotype_name)
   geom_bar(stat = "identity") +
@@ -509,6 +520,17 @@ df_ratios <- df_ratios[order(df_ratios[,phenotype_name]), ]
 df_ratios$meta <- factor(df_ratios$meta, levels = unique(df_ratios$meta))
 print(paste(phenotype_name, '+ sample number: ', sum(df_ratios[phenotype_name]==1)/2))
 
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$sex==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$sex==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$sex, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$sex == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
+
 # Plot the stacked bar plot
 ggplot(df_ratios, aes(x = meta, y = ratio, fill = PENCIL_pred_label_sex)) + # paste0("PENCIL_pred_label_", phenotype_name)
   geom_bar(stat = "identity") +
@@ -545,6 +567,17 @@ cell_counts <- cell_counts[cell_counts[[paste0("PENCIL_pred_label_", phenotype_n
 # Create a vector with all unique patient IDs
 all_patients <- unique(cell_counts$meta)
 print(unique(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_", phenotype_name)]]))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$sex==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$sex==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$sex, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$sex == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 unique_label = c("yes","no")
 # Create a new data frame with all patients having both 'yes' and 'no'
@@ -607,6 +640,17 @@ cell_counts <- cell_counts[cell_counts[[paste0("PENCIL_pred_label_", phenotype_n
 # Create a vector with all unique patient IDs
 all_patients <- unique(cell_counts$meta)
 print(unique(merged_seu_subset@meta.data[[paste0("PENCIL_pred_label_", phenotype_name)]]))
+
+df_ratios_yes = df_ratios[df_ratios$PENCIL_pred_label=='yes',]
+ratios_R = df_ratios_yes$ratio[df_ratios_yes$sex==1]
+ratios_NR = df_ratios_yes$ratio[df_ratios_yes$sex==0]
+result <- wilcox.test(ratios_R, ratios_NR, alternative = "greater")
+print(paste("Hypothesis R > NR: ",result$p.value))
+
+roc_curve <- roc(df_ratios_yes$sex, df_ratios_yes$ratio)
+auc_value <- auc(roc_curve)
+acc_value = mean(df_ratios_yes$sex == as.numeric(df_ratios_yes$ratio>50))
+print(paste('AUC = ', auc_value, '. ACC = ', acc_value))
 
 unique_label = c("yes","no")
 # Create a new data frame with all patients having both 'yes' and 'no'
