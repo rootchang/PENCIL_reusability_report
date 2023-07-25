@@ -284,7 +284,7 @@ predictor = as.numeric(gsva_scores$GSVA_diff)
 result_list[['test2']] = data.frame(ICBresponse = response, GSVAscore = predictor)
 
 ROC_list <- lapply(result_list, function(df) {
-  roc_curve <- roc(df$ICBresponse, df$GSVAscore)
+  roc_curve <- roc(df$ICBresponse, df$GSVAscore, grea) # , levels = c(0, 1), direction = "<"
   auc_value <- auc(roc_curve)
   acc_value = mean(df$ICBresponse == (df$GSVAscore>0))
   return(list(roc_curve = roc_curve, auc_value = auc_value, acc_value = acc_value))
