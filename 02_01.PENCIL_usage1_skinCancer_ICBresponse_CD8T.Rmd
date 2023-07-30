@@ -304,7 +304,7 @@ sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
 module load python/3.8
 
 ## Run PENCIL with .csv files as input, which seems work well
-python 02.Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T_ICBresponse.csv
+python Run_PENCIL_csv.py /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_cell_label_info.csv /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE120575/seu_Tissue_CD8T_ICBresponse_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse multi-classification 1,2 /data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE115978/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE123813/seu_Tissue_CD8T_ICBresponse.csv,/data/Lab_ruppin/tiangen/CancerProject/02.PENCIL/03.Results/GSE166181/seu_PBMC_CD8T_ICBresponse.csv
 
 ```
 

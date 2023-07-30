@@ -23,7 +23,10 @@ data_name = sys.argv[4] # 'GSE200996' 'GSE120575_Tissue_CD8T'
 phenotype = sys.argv[5] # 'ResponseInfo'
 mode = sys.argv[6] # 'multi-classification'  'regression'
 class_weights = [float(eval(x)) for x in sys.argv[7].split(',')]
-exp_newdata_fn_list = sys.argv[8].split(',') # new test datasets, separates by ','
+if len(sys.argv) == 9:
+    exp_newdata_fn_list = sys.argv[8].split(',') # new test datasets, separates by ','
+else:
+    exp_newdata_fn_list = []
 
 print('************** Step 0: loading data ...')
 exp_df=pd.read_csv(exp_fn, sep=',',index_col=0)
@@ -90,16 +93,17 @@ else:
 w = pencil.gene_weights(plot=True)
 plt.close()
 
-print('************** Step 3: predicting on new data ...')
-for i in range(len(exp_newdata_fn_list)):
-    print('    Working on test set %d ...'%(i+1))
-    exp_newdata_fn = exp_newdata_fn_list[i]
-    exp_new_df=pd.read_csv(exp_newdata_fn, sep=',',index_col=0)
-    data_new=exp_new_df.values.T
-    pred_new, confidence_new = pencil.transform(data_new) # apply trained PENCIL on new data
-    save_fn = './results/'+data_name+'/py/'+phenotype+'/predicted_labels_test'+str(i+1)+'.csv'
-    df = pd.DataFrame({'predicted_label': pred_new, 'confidence': confidence_new})
-    df.loc[df['confidence'] < 0, 'predicted_label'] = 'Rejected'
-    df.to_csv(save_fn, index=False)
+if exp_newdata_fn_list:
+    print('************** Step 3: predicting on new data ...')
+    for i in range(len(exp_newdata_fn_list)):
+        print('    Working on test set %d ...'%(i+1))
+        exp_newdata_fn = exp_newdata_fn_list[i]
+        exp_new_df=pd.read_csv(exp_newdata_fn, sep=',',index_col=0)
+        data_new=exp_new_df.values.T
+        pred_new, confidence_new = pencil.transform(data_new) # apply trained PENCIL on new data
+        save_fn = './results/'+data_name+'/py/'+phenotype+'/predicted_labels_test'+str(i+1)+'.csv'
+        df = pd.DataFrame({'predicted_label': pred_new, 'confidence': confidence_new})
+        df.loc[df['confidence'] < 0, 'predicted_label'] = 'Rejected'
+        df.to_csv(save_fn, index=False)
 
 print('All done! Time used: %.2f s'%(time.time() - start_time))

@@ -149,10 +149,6 @@ df <- data.frame(
   group = c(rep("Tumor",length(pa1@result$Description)), rep("PBMC",length(pa2@result$Description)))
 )
 
-# Reactome pathway gene set enrichment analysis
-#pa3 <- gsePathway(tumor_markerGene_ids, pvalueCutoff = 0.2,pAdjustMethod = "BH", verbose = FALSE)
-#pa4 <- gsePathway(PBMC_markerGene_ids, pvalueCutoff = 0.2,pAdjustMethod = "BH", verbose = FALSE)
-
 # Arrange the plots side by side
 pdf(file = paste0(PENCIL_result_dir_deep, "Barplot_pathway_enrichment.pdf"), width = 14, height = 10*0.5) 
 p1 <- barplot(pa1, showCategory = 10,p.adjust.digits = 1)
@@ -166,54 +162,25 @@ dev.off()
 # Calculate known ICB signature UCell score and ICG score
 ```{r}
 
-# ICB_sig <- list(
-#     exh_sig = c('PDCD1', 'CTLA4', 'LAG3', 'HAVCR2', 'TIGIT'), # blood scRNAseq HNSCC ms
-#     cyt_sig = c("GZMA", "PRF1"), # blood scRNAseq HNSCC ms
-#     CXCL13_sig = c("CXCL13"), # blood scRNAseq HNSCC ms
-#     periT_sig = c('GPR18', 'HLA-DOA', 'STAT1'), # Y. Bareche et al. 2022 AoO
-#     STAT1_sig = c('STAT1', 'GBP1', 'IRF1', 'WARS', 'PLAAT4', 'CXCL9', 'GBP5', 'LAP3', 'APOL3', 'IDO1', 'GBP4', 'LAG3', 'CXCL10', 'GZMA', 'PRF1', 'IFNG', 'GBP2', 'CCR5', 'SLC31A2', 'APOL6', 'CXCL11', 'SERPINA1', 'FCGR1B', 'TNFSF10', 'GZMK', 'CST7', 'FGL2', 'TAP1', 'SERPING1', 'FCER1G', 'CD2', 'GIMAP4', 'IFIT3', 'CCL4', 'CXCR6', 'GIMAP5', 'XAF1', 'SLAMF7', 'ANKRD22'), # Y. Bareche et al. 2022 AoO
-#     TCI0_sig = c('CCL5', 'CD27', 'CD274', 'CD276', 'CD8A', 'CMKLR1', 'CXCL9', 'CXCR6', 'HLA-DQA1', 'HLA-DRB1', 'HLA-E', 'IDO1', 'LAG3', 'NKG7', 'PDCD1LG2 '), # Y. Bareche et al. 2022 AoO
-#     TIS_sig = c('CD276', 'HLA-DQA1', 'CD274', 'IDO1', 'HLA-DRB1', 'HLA-E', 'CMKLR1', 'PDCD1LG2', 'PSMB10', 'LAG3', 'CXCL9', 'STAT1', 'CD8A', 'CCL5', 'NKG7', 'TIGIT', 'CD27', 'CXCR6'), # Y. Bareche et al. 2022 AoO
-#     cyt2_sig = c('PRF1', 'GZMB', 'GZMA', 'GZMH', 'NKG7', 'GNLY'), # (Mathewson et al., 2021)
-#     Teff_sig = c('CD8A', 'EOMES', 'PRF1', 'IFNG', 'CD274'), # David F. McDermott et al. 2018 Nat Med
-#     Teff_IFNG_sig = c('CD8A', 'GZMA', 'GZMB', 'IFNG', 'EOMES', 'CXCL9', 'CXCL10', 'TBX21'), # Louis Fehrenbacher et al 2016 Lancet
-#     NKR_sig = c('KLRD1', 'FGFBP2', 'FCGR3A', 'S1PR5', 'KLRC1', 'KLRC3', 'KLRB1', 'KLRC2'), # Luoma et al. Cell 2022
-#     preIFNG_sig = c('IFNG', 'STAT1', 'CCR5', 'CXCL9', 'CXCL10', 'CXCL11', 'IDO1', 'PRF1', 'GZMA', 'HLA-DRA'), # Ayers et al. 2017 JCI
-#     preTCI_sig = c('IL2RG', 'CXCR6', 'CD3D', 'CD2', 'ITGAL', 'TAGAP', 'CIITA', 'HLA-DRA', 'PTPRC', 'CXCL9', 'CCL5', 'NKG7', 'GZMA', 'PRF1', 'CCR5', 'CD3E', 'GZMK', 'IFNG', 'HLA-E', 'GZMB', 'PDCD1', 'SLAMF6', 'CXCL13', 'CXCL10', 'IDO1', 'LAG3', 'STAT1', 'CXCL11'), # preliminary expanded immune sig. Ayers et al. 2017 JCI
-#     IFNG_sig = c('IDO1', 'CXCL10', 'CXCL9', 'HLA-DRA', 'IFNG', 'STAT1'), # Ayers et al. 2017 JCI
-#     TCI_sig = c('CD3D', 'IDO1', 'CIITA', 'CD3E', 'CCL5', 'GZMK', 'CD2', 'HLA-DRA', 'CXCL13', 'IL2RG', 'NKG7', 'HLA-E', 'CXCR6', 'LAG3', 'TAGAP', 'CXCL10', 'STAT1', 'GZMB'), # Ayers et al. 2017 JCI,
-#     prolif_sig = c('BUB1', 'CCNB2', 'CDK1', 'CDKN3', 'FOXM1', 'PCLAF', 'MAD2L1', 'MELK', 'MKI67', 'TOP2A'), # Pabla et al. 2019 JITC
-#     TRM_sig1 = c("IL17A", "IL10", "IL2", "IFNG", "DUSP6", "PDCD1", "CRTAM", "ITGA1", "ITGAE", "CD69", "CD101", "CXCR6", "SELL-", "S1PR1-", "S1PR5-", "CX3CR1-", "MKI67-", "KLF2-", "KLF3-"), # "IL-17", "IL-10", "IL-2", "IFN-r", "DUSP6", "PD-1", "CRTAM", "CD49a", "CD103", "CD69", "CD101", "CXCR6", "CD62L-", "S1PR1-", "S1PR5-", "CX3CR1-", "Ki67-", "KLF2-", "KLF3-": Kumar et al. 2017 Cell Reports
-#     TRM_sig2 = c("ITGAE","VIM","ITGA1","TNFSF9") # Poon et al. Nature Immunology 2023
-# )
-
 ICB_sig <- list(
-    Exhaustion = c('PDCD1', 'CTLA4', 'LAG3', 'HAVCR2', 'TIGIT'), # blood scRNAseq HNSCC ms
-    IFNG = c('IDO1', 'CXCL10', 'CXCL9', 'HLA-DRA', 'IFNG', 'STAT1'), # Ayers et al. 2017 JCI
-    TRM = c("IL17A", "IL10", "IL2", "IFNG", "DUSP6", "PDCD1", "CRTAM", "ITGA1", "ITGAE", "CD69", "CD101", "CXCR6", "SELL-", "S1PR1-", "S1PR5-", "CX3CR1-", "MKI67-", "KLF2-", "KLF3-") # "IL-17", "IL-10", "IL-2", "IFN-r", "DUSP6", "PD-1", "CRTAM", "CD49a", "CD103", "CD69", "CD101", "CXCR6", "CD62L-", "S1PR1-", "S1PR5-", "CX3CR1-", "Ki67-", "KLF2-", "KLF3-": Kumar et al. 2017 Cell Reports
+    Exhaustion = c('PDCD1', 'CTLA4', 'LAG3', 'HAVCR2', 'TIGIT'), 
+    IFNG = c('IDO1', 'CXCL10', 'CXCL9', 'HLA-DRA', 'IFNG', 'STAT1'), 
+    TRM = c("IL17A", "IL10", "IL2", "IFNG", "DUSP6", "PDCD1", "CRTAM", "ITGA1", "ITGAE", "CD69", "CD101", "CXCR6", "SELL-", "S1PR1-", "S1PR5-", "CX3CR1-", "MKI67-", "KLF2-", "KLF3-") 
 )
 
 if('Exhaustion' %in% colnames(merged_seu@meta.data)) {
-  # merged_seu@meta.data$CD4T = NULL
   1
 } else {
   merged_seu <- AddModuleScore_UCell(merged_seu, features=ICB_sig, name=NULL)
 }
 
-
-
-
-# ICG_list = c('ADORA2A', 'BTLA', 'BTN2A1', 'BTN2A2', 'BTN3A1', 'BTNL3', 'BTNL9', 'C10orf54', 'CD160', 'CD209', 'CD226', 'CD27', 'CD274', 'CD276', 'CD28', 'CD40', 'CD40LG', 'CD47', 'CD70', 'CD80', 'CD86', 'CD96', 'CEACAM1', 'CTLA4', 'HAVCR2', 'HLA-A', 'HLA-B', 'HLA-C', 'HLA-DMA', 'HLA-DMB', 'HLA-DOA', 'HLA-DOB', 'HLA-DPA1', 'HLA-DPB1', 'HLA-DQA1', 'HLA-DQB1', 'HLA-DRA', 'HLA-DRB1', 'HLA-DRB3', 'HLA-DRB4', 'HLA-DRB5', 'HLA-E', 'HLA-F', 'HLA-G', 'ICOS', 'ICOSLG', 'IDO1', 'KIR2DL1', 'KIR2DL2', 'KIR2DL3', 'KIR2DL4', 'KIR2DL5A', 'KIR2DL5B', 'KIR2DS1', 'KIR2DS2', 'KIR2DS3', 'KIR2DS4', 'KIR2DS5', 'KIR3DL1', 'KIR3DL2', 'KIR3DL3', 'KIR3DS1', 'LAG3', 'LGALS9', 'PDCD1', 'PDCD1LG2', 'PVR', 'SIRPA', 'TDO2', 'TIGIT', 'TNFRSF14', 'TNFRSF18', 'TNFRSF4', 'TNFRSF9', 'TNFSF14', 'TNFSF18', 'TNFSF4', 'TNFSF9', 'VTCN1')
-
-
+saveRDS(object = merged_seu, file = paste0(processed_dir_train,"seu_all_CD8T_PENCIL.rds")) 
 
 ```
 
 # Violin plot of know signature scores for N/NR cells
 ```{r}
 
-# feats <- c("exh_sig", "cyt_sig", "CXCL13_sig", "periT_sig", "STAT1_sig", "TCI0_sig", "TIS_sig", "cyt2_sig", "Teff_sig", "Teff_IFNG_sig", "NKR_sig", "preIFNG_sig", "preTCI_sig", "IFNG_sig", "TCI_sig", "prolif_sig", "TRM_sig1", "TRM_sig2") 
-feats <- c("Exhaustion", "IFNG", "TRM") 
 merged_seu_subset = subset(merged_seu, subset = PENCIL_pred_label_tissue!='rej')
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "Exhaustion", pt.size = 0, ncol = 1) +
   NoLegend()+
@@ -229,6 +196,14 @@ p <- p +
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_Exhaustion.pdf"),  width = 2, height = 2.5)
 
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$Exhaustion[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$Exhaustion[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "IFNG", pt.size = 0, ncol = 1) +
   NoLegend()+
   xlab("")+
@@ -242,6 +217,14 @@ p <- p +
        axis.title.x = element_blank(),
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_IFNG.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$IFNG[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$IFNG[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
 
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "TRM", pt.size = 0, ncol = 1) +
   NoLegend()+
@@ -257,32 +240,18 @@ p <- p +
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_TRM.pdf"),  width = 2, height = 2.5)
 
-
-```
-
-
-# Known ICG differential expressions (79 ICGs) with FDR < 0.05 in R/NR cells
-```{r}
-
-
-p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label_tissue", features = ICG_list[1:40], pt.size = 0, ncol = 10) +
-  NoLegend()+
-  labs(x = "", y ="")
-ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICG1_PENCILpredLabel.pdf"),  width = 14, height = 8)
-
-p <- VlnPlot(merged_seu, group.by = "PENCIL_pred_label_tissue", features = ICG_list[41:79], pt.size = 0, ncol = 10) +
-  NoLegend()+
-  xlab("") +
-  ylab("") 
-ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICG2_PENCILpredLabel.pdf"),  width = 14, height = 8)
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$TRM[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$TRM[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
 
 ```
 
 
 ```{r}
 
-ICG_list = c('HLA-DRB1', 'LAG3', 'TIGIT')
-merged_seu_subset = subset(merged_seu, subset = PENCIL_pred_label_tissue!='rej')
+#merged_seu_subset = subset(merged_seu, subset = PENCIL_pred_label_tissue!='rej')
+
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "HLA-DRB1", pt.size = 0, ncol = 1) +
   NoLegend()+
   xlab("")+
@@ -296,6 +265,14 @@ p <- p +
        axis.title.x = element_blank(),
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_HLA-DRB1.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
 
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "LAG3", pt.size = 0, ncol = 1) +
   NoLegend()+
@@ -311,6 +288,14 @@ p <- p +
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_LAG3.pdf"),  width = 2, height = 2.5)
 
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
 p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "TIGIT", pt.size = 0, ncol = 1) +
   NoLegend()+
   xlab("")+
@@ -324,6 +309,14 @@ p <- p +
        axis.title.x = element_blank(),
        axis.title.y = element_blank())
 ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_TIGIT.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
 
 ```
 
