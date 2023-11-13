@@ -1,0 +1,894 @@
+---
+title: "Test sensitivity of PENCIL to hyperparameters and input data"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+
+```
+
+# set input and output directories & parameters
+```{r}
+
+dataset = 'GSE120575'
+
+data_dir = paste0("../02.Input/")
+processed_dir <- paste0("../03.Results/", dataset, '/')
+fig_dir = paste0("../03.Results/", dataset, "/Figures/")
+PENCIL_result_dir = paste0("./results/")
+```
+
+# load raw seurat object
+```{r}
+
+sampleType_name = 'Tissue'
+merged_seu = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,"_all_raw.rds"))
+
+```
+
+
+# filter, normalize, scale, and make .h5ad file for celltypist cell annotation
+```{r}
+
+# filter genes to keep only protein coding genes
+protein_coding_gene_file = paste0(data_dir, 'Feldman_protein_coding_genes.csv')
+protein_coding_genes=read.csv(protein_coding_gene_file, header=T)[,1]
+genes <- intersect(protein_coding_genes, row.names(merged_seu))
+merged_seu <- merged_seu[genes, ]
+
+# Normalization, scaling, dimension reduction, and clustering
+merged_seu <- NormalizeData(object=merged_seu, normalization.method="LogNormalize")
+merged_seu <- FindVariableFeatures(object=merged_seu, selection.method='vst', nfeatures=2000)
+merged_seu <- ScaleData(object=merged_seu)
+merged_seu <- RunPCA(object=merged_seu, features=VariableFeatures(merged_seu))
+merged_seu <- FindNeighbors(object=merged_seu, dims=1:10, k.param=20)
+merged_seu <- FindClusters(object=merged_seu, resolution=1.6)
+merged_seu <- RunUMAP(object=merged_seu, dims=1:10)
+
+# save for .h5ad as celltypist's input
+SaveH5Seurat(merged_seu, filename = paste0(processed_dir,"seu_",sampleType_name,"_all.h5Seurat"), overwrite = TRUE)
+Convert(paste0(processed_dir,"seu_",sampleType_name,"_all.h5Seurat"), dest = "h5ad", assay = "RNA", overwrite = TRUE) # .X: only scaled data for HVGs. .raw.X: all genes 
+saveRDS(object = merged_seu, file = paste0(processed_dir,"seu_",sampleType_name,"_all.rds")) 
+
+```
+
+
+# celltypist annotation
+```{bash}
+
+celltypist --indata ../03.Results/GSE120575/seu_Tissue_all.h5ad --model Immune_All_Low.pkl --outdir ../03.Results/GSE120575/ --prefix Tissue_all_celltypist_ImmuneAllLow_ --majority-voting
+
+```
+
+# add cell type annotation to seurat object
+```{r}
+
+merged_seu = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,"_all.rds"))
+
+cell_types_to_keep = c("CD8T-cells")
+confidence_cutoff = 0.1 #  set cell labels to "Other" if confidence below confidence_cutoff (about 6% cells having conf < 0.1)
+
+prediction_labels <- read.csv(paste0(processed_dir, sampleType_name,"_all_celltypist_ImmuneAllLow_predicted_labels.csv"), row.names = 1)
+prediction_prob <- read.csv(paste0(processed_dir, sampleType_name,"_all_celltypist_ImmuneAllLow_probability_matrix.csv"), row.names = 1)
+prediction_prob_max = data.frame(max_value = apply(prediction_prob, 1, max, na.rm = TRUE))
+colnames(prediction_prob_max) = c('probability')
+prediction_labels_prob <- cbind(prediction_labels[c('predicted_labels')], prediction_prob_max[c('probability')])
+
+merged_seu$cell_type_celltypist_raw <- prediction_labels_prob$predicted_labels
+merged_seu$cell_type_celltypist_raw_prob <- prediction_labels_prob$probability
+
+merged_seu$cell_type_celltypist = merged_seu$cell_type_celltypist_raw
+merged_seu$cell_type_celltypist <- ifelse(grepl("CD8|cytotoxic T|MAIT", merged_seu$cell_type_celltypist, ignore.case = FALSE), "CD8T-cells", merged_seu$cell_type_celltypist)
+if (length(unique(merged_seu$cell_type_celltypist)) > length(cell_types_to_keep)){
+  merged_seu$cell_type_celltypist <- recode(merged_seu$cell_type_celltypist, !!!setNames(rep("Other", length(setdiff(unique(merged_seu$cell_type_celltypist), cell_types_to_keep))), setdiff(unique(merged_seu$cell_type_celltypist), cell_types_to_keep)))
+}
+merged_seu$cell_type_celltypist[merged_seu$cell_type_celltypist_raw_prob < confidence_cutoff] = "Other"
+
+```
+
+
+# cell annotation using singler
+```{r}
+
+confidence_cutoff = 0.4 # set cell labels to "Other" if confidence below confidence_cutoff (about 6% cells having conf < 0.4)
+
+# cell annotation using BlueprintEncodeData
+cellType_anno_fn = paste0(processed_dir, sampleType_name,"_singleR_BlueprintEncodeData_predicted_labels.csv")
+if(file.exists(cellType_anno_fn)){
+  singler.anno1 <- read.csv(cellType_anno_fn, row.names = 1)
+} else {
+  ref1 <- celldex::BlueprintEncodeData()
+  singleR <- as.SingleCellExperiment(merged_seu, assay= "RNA") 
+  singler.anno1 <- SingleR(test = singleR, ref = ref1, labels = (ref1$label.main)) # label.main
+  write.csv(singler.anno1, file = cellType_anno_fn, row.names = TRUE)
+}
+cell_labelsProb_df <- data.frame(max_value = apply(singler.anno1$scores, 1, max, na.rm = TRUE))
+cell_labels_df = cbind(singler.anno1$labels, cell_labelsProb_df)
+colnames(cell_labels_df) = c('predicted_labels', 'probability')
+
+merged_seu$cell_type_ENCODE_raw <- cell_labels_df$predicted_labels
+merged_seu$cell_type_ENCODE_raw_prob <- cell_labels_df$probability
+
+merged_seu$cell_type_ENCODE <- merged_seu$cell_type_ENCODE_raw
+merged_seu$cell_type_ENCODE <- ifelse(grepl("CD8+", merged_seu$cell_type_ENCODE, ignore.case = TRUE), "CD8T-cells", merged_seu$cell_type_ENCODE)
+if (length(unique(merged_seu$cell_type_ENCODE)) > length(cell_types_to_keep)){
+  merged_seu$cell_type_ENCODE <- recode(merged_seu$cell_type_ENCODE, !!!setNames(rep("Other", length(setdiff(unique(merged_seu$cell_type_ENCODE), cell_types_to_keep))), setdiff(unique(merged_seu$cell_type_ENCODE), cell_types_to_keep)))
+}
+merged_seu$cell_type_ENCODE[merged_seu$cell_type_ENCODE_raw_prob < confidence_cutoff] = "Other"
+
+
+```
+
+
+# cell annotation using sctype
+```{r}
+
+# load libraries and functions
+install.packages("HGNChelper")
+
+lapply(c("dplyr","Seurat","HGNChelper","openxlsx"), library, character.only = T)
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R"); source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# get cell-type-specific gene sets from our in-built database (DB)
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Immune system" # e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+
+
+es.max = sctype_score(scRNAseqData = merged_seu[["RNA"]]@scale.data, scaled = TRUE, 
+                      gs = gs_list$gs_positive, gs2 = gs_list$gs_negative) 
+
+
+# merge by cluster
+cL_resutls = do.call("rbind", lapply(unique(merged_seu@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(merged_seu@meta.data[merged_seu@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(merged_seu@meta.data$seurat_clusters==cl)), 10)
+}))
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+CD8_clusters = as.character(sctype_scores$cluster[grepl("CD8", sctype_scores$type)])
+
+
+merged_seu$sctype_cellType = "Other"
+merged_seu$sctype_cellType[merged_seu$seurat_clusters %in% CD8_clusters] = "CD8T-cells"
+
+
+merged_seu_subset <- subset(merged_seu, subset = sctype_cellType %in% c("CD8T-cells"))
+print(merged_seu_subset)
+
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(merged_seu_subset)
+
+variable_genes <- VariableFeatures(merged_seu_subset)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_sctype.csv"))
+cell_label_df = data.frame(label = merged_seu_subset$ResponseInfo)
+write.csv(cell_label_df, file=paste0(processed_dir,"cell_label_info_sctype.csv"))
+emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(processed_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap_sctype.csv'))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_sctype.rds")) 
+
+```
+
+# make PENCIL input 1: use originally annotated CD8T cells
+```{r}
+
+phenotype_name = 'ResponseInfo'  # ICB response of samples
+cellType_of_interest = 'CD8T' 
+
+merged_seu_subset <- subset(merged_seu, subset = cell_type_originalCD8T %in% c("CD8+ T-cells"))
+print(merged_seu_subset)
+
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(merged_seu_subset)
+merged_seu_subset <- RunPCA(merged_seu_subset, pc.genes = merged_seu_subset@var.genes)
+merged_seu_subset <- RunUMAP(merged_seu_subset, reduction = "pca", dims = 1:10)
+merged_seu_subset <- FindNeighbors(merged_seu_subset, reduction = "pca", dims=1:10, k.param=20)
+merged_seu_subset <- FindClusters(merged_seu_subset, resolution = 0.8)
+
+################ 1: use the default gene order (expression variance from high to low) ################
+variable_genes <- VariableFeatures(merged_seu_subset)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,".csv"))
+cell_label_df = data.frame(label = merged_seu_subset$ResponseInfo)
+write.csv(cell_label_df, file=paste0(processed_dir,"cell_label_info.csv"))
+emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(processed_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap.csv'))
+
+################ 2: use altered gene order (expression variance from low to high) ################
+reversed_genes <- rev(variable_genes)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_variance_low2high.csv"))
+
+################ 3: use altered gene order (mean expression from low to high) ################
+variable_expression <- merged_seu_subset@assays[['RNA']]@data[variable_genes, ]
+mean_expression <- rowMeans(variable_expression)
+mean_expression_df <- data.frame(gene = rownames(variable_expression), mean_expression)
+ranked_genes <- mean_expression_df[order(mean_expression_df$mean_expression, decreasing = F), ]
+ranked_genes_low2high = ranked_genes$gene
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[ranked_genes_low2high,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_geneExp_low2high.csv"))
+
+################ 4: use altered gene order (gene name from A to Z) ################
+variable_genes_OrderByName = sort(variable_genes)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes_OrderByName,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_geneName_a2z.csv"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_Feldman.rds")) 
+
+```
+
+
+# make PENCIL input 3: use celltypist annotated CD8T cells
+```{r}
+
+merged_seu_subset <- subset(merged_seu, subset = cell_type_celltypist %in% c("CD8T-cells"))
+print(merged_seu_subset)
+
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(merged_seu_subset)
+
+variable_genes <- VariableFeatures(merged_seu_subset)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_celltypist.csv"))
+cell_label_df = data.frame(label = merged_seu_subset$ResponseInfo)
+write.csv(cell_label_df, file=paste0(processed_dir,"cell_label_info_celltypist.csv"))
+emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(processed_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap_celltypist.csv'))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_celltypist.rds")) 
+
+```
+
+
+# make PENCIL input 4: use singler annotated CD8T cells
+```{r}
+
+merged_seu_subset <- subset(merged_seu, subset = cell_type_ENCODE %in% c("CD8T-cells"))
+print(merged_seu_subset)
+
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(merged_seu_subset)
+
+variable_genes <- VariableFeatures(merged_seu_subset)
+exp_data_scaled = merged_seu_subset@assays[["RNA"]]@scale.data[variable_genes,]
+write.csv(exp_data_scaled, file=paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_singler.csv"))
+cell_label_df = data.frame(label = merged_seu_subset$ResponseInfo)
+write.csv(cell_label_df, file=paste0(processed_dir,"cell_label_info_singler.csv"))
+emd = merged_seu_subset@reductions[["umap"]]@cell.embeddings
+write.csv(emd, file=paste0(processed_dir, "seu_",sampleType_name,'_',cellType_of_interest,'_embedding_umap_singler.csv'))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_singler.rds")) 
+
+```
+
+
+# Run PENCIL
+```{bash}
+
+## use gpu to accelerate PENCIL
+sinteractive --mem=128g --cpus-per-task=32 --gres=gpu:k80:2 --time=24:00:00
+module load python/3.8
+
+## Run PENCIL for original CD8T annotation (use the default gene order) with class weights = 1:1 or 1:0.2 or 1:0.5 or 1:2 or 1:3 or 1:4 or 1:5
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_1 multi-classification 1,1
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_0.2 multi-classification 1,0.2
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_0.5 multi-classification 1,0.5
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_2 multi-classification 1,2
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_3 multi-classification 1,3
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_4 multi-classification 1,4
+
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse_cw_5 multi-classification 1,5
+
+
+## Run PENCIL for original CD8T annotation (use the low to high variance gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_variance_low2high.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse3 multi-classification 1,2
+
+## Run PENCIL for original CD8T annotation (use the low to high mean expression gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_geneExp_low2high.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse4 multi-classification 1,2
+
+## Run PENCIL for original CD8T annotation (use the A to Z gene name gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_geneName_a2z.csv ../03.Results/GSE120575/cell_label_info.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap.csv GSE120575_Tissue_CD8T ICBresponse5 multi-classification 1,2
+
+## Run PENCIL for celltypist annotated CD8T cells (use the default gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_celltypist.csv ../03.Results/GSE120575/cell_label_info_celltypist.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap_celltypist.csv GSE120575_Tissue_CD8T ICBresponse7 multi-classification 1,2
+
+## Run PENCIL for singler annotated CD8T cells (use the default gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_singler.csv ../03.Results/GSE120575/cell_label_info_singler.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap_singler.csv GSE120575_Tissue_CD8T ICBresponse8 multi-classification 1,2
+
+## Run PENCIL for sctype annotated CD8T cells (use the default gene order)
+python Run_PENCIL_csv.py ../03.Results/GSE120575/seu_Tissue_CD8T_sctype.csv ../03.Results/GSE120575/cell_label_info_sctype.csv ../03.Results/GSE120575/seu_Tissue_CD8T_embedding_umap_sctype.csv GSE120575_Tissue_CD8T ICBresponse9 multi-classification 1,2
+
+```
+
+
+# Add PENCIL identified phenotypic cell labels to seurat object (original CD8T cells)
+```{r}
+
+# load seurat object
+merged_seu_subset = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_Feldman.rds"))
+
+
+######### PENCIL result with different class weights
+phenotype_name = 'ICBresponse_cw_1'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw1 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw1) = c("PENCIL_pred_label_cw_1_1")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1)
+predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1 <- gsub("1", "yes", predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1)
+predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1 <- gsub("0", "no", predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1)
+predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1 <- gsub("Rejected", "rej", predicted_cell_labels_cw1$PENCIL_pred_label_cw_1_1)
+
+phenotype_name = 'ICBresponse_cw_0.2'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw0.2 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw0.2) = c("PENCIL_pred_label_cw_1_0.2")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2)
+predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2 <- gsub("1", "yes", predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2)
+predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2 <- gsub("0", "no", predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2)
+predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2 <- gsub("Rejected", "rej", predicted_cell_labels_cw0.2$PENCIL_pred_label_cw_1_0.2)
+
+phenotype_name = 'ICBresponse_cw_0.5'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw0.5 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw0.5) = c("PENCIL_pred_label_cw_1_0.5")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5)
+predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5 <- gsub("1", "yes", predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5)
+predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5 <- gsub("0", "no", predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5)
+predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5 <- gsub("Rejected", "rej", predicted_cell_labels_cw0.5$PENCIL_pred_label_cw_1_0.5)
+
+phenotype_name = 'ICBresponse_cw_2'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw2 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw2) = c("PENCIL_pred_label_cw_1_2")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2)
+predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2 <- gsub("1", "yes", predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2)
+predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2 <- gsub("0", "no", predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2)
+predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2 <- gsub("Rejected", "rej", predicted_cell_labels_cw2$PENCIL_pred_label_cw_1_2)
+
+phenotype_name = 'ICBresponse_cw_3'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw3 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw3) = c("PENCIL_pred_label_cw_1_3")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3)
+predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3 <- gsub("1", "yes", predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3)
+predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3 <- gsub("0", "no", predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3)
+predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3 <- gsub("Rejected", "rej", predicted_cell_labels_cw3$PENCIL_pred_label_cw_1_3)
+
+phenotype_name = 'ICBresponse_cw_4'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw4 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw4) = c("PENCIL_pred_label_cw_1_4")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4)
+predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4 <- gsub("1", "yes", predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4)
+predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4 <- gsub("0", "no", predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4)
+predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4 <- gsub("Rejected", "rej", predicted_cell_labels_cw4$PENCIL_pred_label_cw_1_4)
+
+phenotype_name = 'ICBresponse_cw_5'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_cw5 <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_cw5) = c("PENCIL_pred_label_cw_1_5")
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5)
+predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5 <- gsub("1", "yes", predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5)
+predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5 <- gsub("0", "no", predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5)
+predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5 <- gsub("Rejected", "rej", predicted_cell_labels_cw5$PENCIL_pred_label_cw_1_5)
+
+
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_cw1, predicted_cell_labels_cw0.2, predicted_cell_labels_cw0.5, predicted_cell_labels_cw2, predicted_cell_labels_cw3, predicted_cell_labels_cw4, predicted_cell_labels_cw5) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label_cw_1_1 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_1, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_0.2 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_0.2, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_0.5 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_0.5, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_2 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_2, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_3 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_3, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_4 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_4, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_5 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_5, levels = c("yes", "no", "rej"))
+
+
+
+
+######### PENCIL result with the low to high variance gene order
+phenotype_name = 'ICBresponse3'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label_geneOrder_var_low2high")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_var_low2high)
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label_geneOrder_var_low2high <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_var_low2high, levels = c("yes", "no", "rej"))
+
+
+######### PENCIL result with the low to high mean expression gene order
+phenotype_name = 'ICBresponse4'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label_geneOrder_exp_low2high")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_exp_low2high)
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+#merged_seu_subset@meta.data$PENCIL_pred_label = NULL
+merged_seu_subset$PENCIL_pred_label_geneOrder_exp_low2high <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_exp_low2high, levels = c("yes", "no", "rej"))
+
+
+######### PENCIL result with the A to Z gene name gene order
+phenotype_name = 'ICBresponse5'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label_geneOrder_name_a2z")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z)
+predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label_geneOrder_name_a2z)
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label_geneOrder_name_a2z <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_name_a2z, levels = c("yes", "no", "rej"))
+
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_Feldman.rds")) 
+```
+
+
+
+# Add PENCIL identified phenotypic cell labels to seurat object (celltypist CD8T cells)
+```{r}
+
+# load seurat object
+merged_seu_subset = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_celltypist.rds"))
+
+phenotype_name = 'ICBresponse7'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_celltypist.rds")) 
+
+```
+
+
+# Add PENCIL identified phenotypic cell labels to seurat object (singler CD8T cells)
+```{r}
+
+# load seurat object
+merged_seu_subset = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_singler.rds"))
+
+phenotype_name = 'ICBresponse8'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_singler.rds")) 
+
+```
+
+# Add PENCIL identified phenotypic cell labels to seurat object (sctype CD8T cells)
+```{r}
+
+# load seurat object
+merged_seu_subset = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_sctype.rds"))
+
+
+######### PENCIL result with class weights = 1:2
+phenotype_name = 'ICBresponse9'
+predicted_cell_labels = read.csv(paste0(PENCIL_result_dir, dataset, '_', sampleType_name, '_', cellType_of_interest,"/py/", phenotype_name, "/predicted_labels.csv"))
+predicted_cell_labels_new <- subset(predicted_cell_labels, select = 'predicted_label')
+colnames(predicted_cell_labels_new) = c("PENCIL_pred_label")
+
+# change label names to yes, no, rej
+label_names = unique(predicted_cell_labels_new$PENCIL_pred_label)
+print(label_names)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("1", "yes", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("0", "no", predicted_cell_labels_new$PENCIL_pred_label)
+predicted_cell_labels_new$PENCIL_pred_label <- gsub("Rejected", "rej", predicted_cell_labels_new$PENCIL_pred_label)
+
+
+meta <- merged_seu_subset@meta.data
+meta.new <- cbind(meta, predicted_cell_labels_new) # cell ID in PENCIL output does not match the original ones. But it is in the same order.
+merged_seu_subset <- AddMetaData(merged_seu_subset, meta.new)
+merged_seu_subset$PENCIL_pred_label <- factor(merged_seu_subset$PENCIL_pred_label, levels = c("yes", "no", "rej"))
+
+saveRDS(object = merged_seu_subset, file = paste0(processed_dir, "seu_",sampleType_name,"_", cellType_of_interest, "_sctype.rds")) 
+
+```
+
+# UMAP visualization of original and PENCIL-predicted CD8T cells (Figure 1a left and middle panels)
+```{r}
+
+merged_seu_subset = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_Feldman.rds"))
+phenotype_name = 'ResponseInfo'
+
+merged_seu_subset <- FindVariableFeatures(object=merged_seu_subset, selection.method='vst', nfeatures=2000)
+merged_seu_subset <- ScaleData(merged_seu_subset)
+merged_seu_subset <- RunPCA(merged_seu_subset, pc.genes = merged_seu_subset@var.genes)
+merged_seu_subset <- RunUMAP(merged_seu_subset, reduction = "pca", dims = 1:10)
+merged_seu_subset <- FindNeighbors(merged_seu_subset, reduction = "pca", dims=1:10, k.param=20)
+merged_seu_subset <- FindClusters(merged_seu_subset, resolution = 0.8)
+
+merged_seu_subset$ResponseInfo <- factor(merged_seu_subset$ResponseInfo, levels = c(1,0))
+merged_seu_subset$PENCIL_pred_label_cw_1_1 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_1, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_cw_1_2 <- factor(merged_seu_subset$PENCIL_pred_label_cw_1_2, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_geneOrder_var_low2high <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_var_low2high, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_geneOrder_exp_low2high <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_exp_low2high, levels = c("yes", "no", "rej"))
+merged_seu_subset$PENCIL_pred_label_geneOrder_name_a2z <- factor(merged_seu_subset$PENCIL_pred_label_geneOrder_name_a2z, levels = c("yes", "no", "rej"))
+
+
+###### UMAP of true cell labels
+DimPlot(merged_seu_subset, group.by = phenotype_name, pt.size = 0.1)+NoLegend() +
+  scale_color_manual(values = c("orange", "purple"))+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", sampleType_name,'_',cellType_of_interest, "_Feldman_",phenotype_name,".pdf"), height = 60*1.2, width = 60*1.2, units = "mm")
+
+###### UMAP of PENCIL predicted cell labels with class weights = 1:1
+DimPlot(merged_seu_subset, group.by = "PENCIL_pred_label_cw_1_1", pt.size = 0.1)+NoLegend() +
+  scale_color_manual(values = c("orange", "purple", "#D3D3D3"))+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", sampleType_name,'_',cellType_of_interest, "_PENCILpredLabel_Feldman_CW1.pdf"), height = 60*1.2, width = 60*1.2, units = "mm")
+
+```
+# UMAP of PENCIL predicted cell labels with gene order of a2z gene name (Figure 1b left panel)
+```{r}
+
+DimPlot(merged_seu_subset, group.by = "PENCIL_pred_label_geneOrder_name_a2z", pt.size = 0.1)+NoLegend() +
+  scale_color_manual(values = c("orange", "purple", "#D3D3D3"))+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir, "UMAP_", sampleType_name,'_',cellType_of_interest, "_PENCILpredLabel_Feldman_geneOrder_name_a2z.pdf"), height = 60*1.2, width = 60*1.2, units = "mm")
+
+```
+
+
+# Line plot of cell numbers with diff. cw parameter values (Figure 1a right panel)
+```{r}
+
+cellNum_cw0.2 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_0.2))
+cellNum_cw0.5 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_0.5))
+cellNum_cw1 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_1))
+cellNum_cw2 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_2))
+cellNum_cw3 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_3))
+cellNum_cw4 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_4))
+cellNum_cw5 = as.numeric(table(merged_seu_subset$PENCIL_pred_label_cw_1_5))
+
+x = c(0.2,0.5,1,2,3,4,5)
+y_R = c(cellNum_cw0.2[1], cellNum_cw0.5[1], cellNum_cw1[1], cellNum_cw2[1], cellNum_cw3[1], cellNum_cw4[1], cellNum_cw5[1])
+y_NR = c(cellNum_cw0.2[2], cellNum_cw0.5[2], cellNum_cw1[2], cellNum_cw2[2], cellNum_cw3[2], cellNum_cw4[2], cellNum_cw5[2])
+y_rej = c(cellNum_cw0.2[3], cellNum_cw0.5[3], cellNum_cw1[3], cellNum_cw2[3], cellNum_cw3[3], cellNum_cw4[3], cellNum_cw5[3])
+
+
+data <- data.frame(x = x, y_R = y_R, y_NR = y_NR, y_rej = y_rej)
+
+
+label_colors <- c("R" = "orange", "NR" = "purple", "Rej" = "#D3D3D3")
+# Create the plot
+plot <- ggplot(data, aes(x = x)) +
+  geom_line(aes(y = y_R, color = "R"), size = 1) +
+  geom_line(aes(y = y_NR, color = "NR"), size = 1) +
+  geom_line(aes(y = y_rej, color = "Rej"), size = 1) +
+  geom_point(aes(y = y_R, color = "R"), size = 3) +
+  geom_point(aes(y = y_NR, color = "NR"), size = 3) +
+  geom_point(aes(y = y_rej, color = "Rej"), size = 3) +
+  labs(x = "Class weights", y = "Predicted cell number") +
+  scale_color_manual(values = label_colors) +  # Set custom label colors
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, color = "black"),
+        axis.text.y = element_text(color = "black"),
+        legend.title = element_blank(),
+        legend.position = c(0.41, 1.15),
+        legend.key.height = unit(5, "mm"),
+        legend.text = element_text(size = 8),
+        legend.background = element_rect(fill = "transparent"),
+        plot.margin = margin(t = 10, r = 5, b = 5, l = 5, unit = "mm")) + 
+  guides(color = guide_legend(nrow = 3))
+ggsave(filename = paste0(fig_dir, "Line_", sampleType_name,'_',cellType_of_interest, "_PENCILpredLabel_Feldman_cw.pdf"), plot, width = 4*0.6, height = 3.5*0.6)
+
+```
+
+# Venn plot of cell numbers with diff. gene order (Figure 1b right 3 panels)
+```{r}
+
+library(ggVennDiagram)
+
+# PENCIL predicted cell types 
+cell_types = c("no", "yes", "rej")
+cell_types_display = c("NR", "R", "Rej")
+
+# Overlap of predicted cells for genes re-ordered by gene name (a to z)
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_geneOrder_name_a2z == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_geneOrder_Name.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+
+# Overlap of predicted cells for genes re-ordered by expression variance (low to high)
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_geneOrder_var_low2high == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_geneOrder_Variance.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+
+# Overlap of predicted cells for genes re-ordered by expression (low to high)
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset)[merged_seu_subset$PENCIL_pred_label_geneOrder_exp_low2high == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_geneOrder_Expr.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+
+```
+
+
+
+# Venn plot of overlap between diff. annotation of CD8T (Figure 1c)
+```{r}
+
+# CD8T cells from diff. annotation
+CD8T_cells_original = colnames(merged_seu)[merged_seu$cell_type_originalCD8T == "CD8+ T-cells"]
+CD8T_cells_celltypist = colnames(merged_seu)[merged_seu$cell_type_celltypist == "CD8T-cells"]
+CD8T_cells_singler = colnames(merged_seu)[merged_seu$cell_type_ENCODE == "CD8T-cells"]
+CD8T_cells_sctype = colnames(merged_seu)[merged_seu$sctype_cellType == "CD8T-cells"]
+
+CD8T_cells_list = list()
+CD8T_cells_list[[1]] = CD8T_cells_original
+CD8T_cells_list[[2]] = CD8T_cells_celltypist
+CD8T_cells_list[[3]] = CD8T_cells_singler
+CD8T_cells_list[[4]] = CD8T_cells_sctype
+
+##### overlap of annotated CD8T cells
+plots <- vector(mode = "list", length = 3) 
+# Create Venn diagrams
+for(i in 2:4){
+  cells1 = CD8T_cells_list[[1]]
+  cells2 = CD8T_cells_list[[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = "") +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_diffAnno.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 5.5, height = 5.5)
+
+
+
+
+
+
+# Overlap of predicted R/NR cells from diff. annotation
+merged_seu_subset_original = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_Feldman.rds"))
+R_cells_original = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == "yes"]
+NR_cells_original = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == "no"]
+Rej_cells_original = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == "rej"]
+
+merged_seu_subset_celltypist = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_celltypist.rds"))
+R_cells_celltypist = colnames(merged_seu_subset_celltypist)[merged_seu_subset_celltypist$PENCIL_pred_label == "yes"]
+NR_cells_celltypist = colnames(merged_seu_subset_celltypist)[merged_seu_subset_celltypist$PENCIL_pred_label == "no"]
+Rej_cells_celltypist = colnames(merged_seu_subset_celltypist)[merged_seu_subset_celltypist$PENCIL_pred_label == "rej"]
+
+merged_seu_subset_singler = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_singler.rds"))
+R_cells_singler = colnames(merged_seu_subset_singler)[merged_seu_subset_singler$PENCIL_pred_label == "yes"]
+NR_cells_singler = colnames(merged_seu_subset_singler)[merged_seu_subset_singler$PENCIL_pred_label == "no"]
+Rej_cells_singler = colnames(merged_seu_subset_singler)[merged_seu_subset_singler$PENCIL_pred_label == "rej"]
+
+merged_seu_subset_sctype = readRDS(file = paste0(processed_dir,"seu_",sampleType_name,'_',cellType_of_interest,"_sctype.rds"))
+R_cells_sctype = colnames(merged_seu_subset_sctype)[merged_seu_subset_sctype$PENCIL_pred_label == "yes"]
+NR_cells_sctype = colnames(merged_seu_subset_sctype)[merged_seu_subset_sctype$PENCIL_pred_label == "no"]
+Rej_cells_sctype = colnames(merged_seu_subset_sctype)[merged_seu_subset_sctype$PENCIL_pred_label == "rej"]
+
+
+pred_cells_list1 = list()
+pred_cells_list1[[1]] = R_cells_original
+pred_cells_list1[[2]] = R_cells_celltypist
+pred_cells_list1[[3]] = R_cells_singler
+pred_cells_list1[[4]] = R_cells_sctype
+
+NR_cells_list = list()
+NR_cells_list[[1]] = NR_cells_original
+NR_cells_list[[2]] = NR_cells_celltypist
+NR_cells_list[[3]] = NR_cells_singler
+NR_cells_list[[4]] = NR_cells_sctype
+
+Rej_cells_list = list()
+Rej_cells_list[[1]] = Rej_cells_original
+Rej_cells_list[[2]] = Rej_cells_celltypist
+Rej_cells_list[[3]] = Rej_cells_singler
+Rej_cells_list[[4]] = Rej_cells_sctype
+
+
+# PENCIL predicted cell types 
+cell_types = c("no", "yes", "rej")
+cell_types_display = c("NR", "R", "Rej")
+
+# Overlap of predicted cells for celltypist
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset_celltypist)[merged_seu_subset_celltypist$PENCIL_pred_label == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_diffAnno_celltypist.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+
+# Overlap of predicted cells for singler
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset_celltypist)[merged_seu_subset_singler$PENCIL_pred_label == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_diffAnno_singler.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+
+# Overlap of predicted cells for singler
+plots <- vector(mode = "list", length = length(cell_types)) 
+# Create Venn diagrams
+for(i in 1:length(cell_types)){
+  # Filter to cell type
+  cells1 = colnames(merged_seu_subset_original)[merged_seu_subset_original$PENCIL_pred_label_cw_1_2 == cell_types[i]]
+  cells2 = colnames(merged_seu_subset_celltypist)[merged_seu_subset_sctype$PENCIL_pred_label == cell_types[i]]
+  # Generate Venn
+  plots[[i]] <- ggVennDiagram(list(cells1, cells2), category.names = c(" ", "  "), show_colorbar = FALSE, label_alpha=0, aspect_ratio = 0.5) +
+    labs(title = cell_types_display[i]) +
+    scale_fill_gradient(low="white",high = "white")+
+    theme(plot.title = element_text(hjust = 0.5))  # Center the title
+}
+# Arrange plots
+grid_arranged <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+filename = paste0(fig_dir, "Venn_cellNum_",sampleType_name,"_diffAnno_sctype.pdf")
+ggsave(filename = filename, plot = grid_arranged, width = 4, height = 4)
+
+```
+

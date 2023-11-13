@@ -1,0 +1,931 @@
+---
+title: "Predict cell origin in HNSCC using PENCIL predicted tumor-relevant CD8+T cells"
+author: "Tiangen Chang tiangen.chang@nih.gov"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# load required package
+```{r, include=FALSE}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("UCell")
+library(UCell)
+
+#devtools::install_github("mojaveazure/seurat-disk")
+#devtools::install_github('satijalab/seurat-data')
+library(SeuratData)
+library(SeuratDisk)
+
+library(caret)
+library(Seurat)
+library(GEOquery)
+library(dplyr)
+library(ggplot2)
+library(SingleR)
+library(sctransform)
+library(celldex)
+library(dittoSeq)
+library(SeuratWrappers)
+library(harmony)
+library(scuttle)
+library(scran)
+library(scFeatureFilter)
+library(cowplot)
+library(patchwork)
+library(edgeR)
+library(RColorBrewer)
+library(stringr)
+library(org.Hs.eg.db)
+
+library(ReactomePA)
+library(enrichplot)
+library(gridExtra)
+
+library(GSVA)
+library(pROC)
+```
+
+# set input and output directories & parameters
+```{r}
+
+shared_data_dir = paste0("../02.Input/")
+PENCIL_result_dir = paste0("./01.Scripts/results/")
+PENCIL_result_dir_deep = paste0(PENCIL_result_dir, 'GSE139324_all_CD8T/py/Tumor/')
+
+dataset_train = 'GSE139324'
+processed_dir_train <- paste0("../03.Results/", dataset_train, '/')
+fig_dir_train = paste0("../03.Results/", dataset_train, "/Figures/")
+
+dataset_test1 = 'GSE164690'
+processed_dir_test1 <- paste0("../03.Results/", dataset_test1, '/')
+fig_dir_test1 = paste0("../03.Results/", dataset_test1, "/Figures/")
+
+dataset_test2 = 'GSE162025'
+processed_dir_test2 <- paste0("../03.Results/", dataset_test2, '/')
+fig_dir_test2 = paste0("../03.Results/", dataset_test2, "/Figures/")
+
+dataset_test3 = 'GSE200996'
+processed_dir_test3 <- paste0("../03.Results/", dataset_test3, '/')
+fig_dir_test3 = paste0("../03.Results/", dataset_test3, "/Figures/")
+
+dataset_test4 = 'GSE180268'
+processed_dir_test4 <- paste0("../03.Results/", dataset_test4, '/')
+fig_dir_test4 = paste0("../03.Results/", dataset_test4, "/Figures/")
+
+dataset_test5 = 'GSE182227'
+processed_dir_test5 <- paste0("../03.Results/", dataset_test5, '/')
+fig_dir_test5 = paste0("../03.Results/", dataset_test5, "/Figures/")
+
+```
+
+
+# load data and UMAP for true labels
+```{r}
+
+phenotype_name = 'tissue'
+sampleType_name = 'all'
+cellType_of_interest = 'CD8T'
+
+# loading seurat object of training data
+merged_seu = readRDS(file = paste0(processed_dir_train,"seu_all_CD8T_PENCIL.rds"))
+
+# Normalization, scaling, dimension reduction, and clustering
+merged_seu <- NormalizeData(object=merged_seu, normalization.method="LogNormalize")
+merged_seu <- FindVariableFeatures(object=merged_seu, selection.method='vst', nfeatures=2000)
+merged_seu <- ScaleData(object=merged_seu)
+merged_seu <- RunPCA(object=merged_seu, features=VariableFeatures(merged_seu))
+merged_seu <- FindNeighbors(object=merged_seu, dims=1:10, k.param=20)
+merged_seu <- FindClusters(object=merged_seu, resolution=1.6)
+merged_seu <- RunUMAP(object=merged_seu, dims=1:10)
+
+
+###### UMAP of true cell labels
+DimPlot(merged_seu, group.by = phenotype_name, pt.size = 0.1)+NoLegend() +
+  scale_color_manual(values = c("orange", "purple"))+
+  ggtitle("")
+ggsave(filename = paste0(fig_dir_train, "UMAP_", sampleType_name,'_',cellType_of_interest, "_Feldman_",phenotype_name,".pdf"), height = 60*1.2, width = 60*1.2, units = "mm")
+print(table(merged_seu@meta.data[phenotype_name]))
+
+```
+
+
+# Identify DEGs for PENCIL predicted tumor vs PBMC cells on training data
+```{r}
+
+logFCfilter = 0.25
+adjPvalFilter = 0.05
+
+##### find all markers for PENCIL predicted labels
+Idents(object = merged_seu) <- merged_seu@meta.data$'PENCIL_pred_label_tissue'
+Cells.markers = FindAllMarkers(merged_seu, only.pos=T, min.pct=0.25, logfc.threshold = logFCfilter)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+
+sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))) > logFCfilter & 
+                               as.numeric(as.vector(Cells.markers$p_val_adj)) < adjPvalFilter), ]
+
+write.csv(sig.markers, paste0(processed_dir_train, "sig.markers_PENCILpredLabel_",sampleType_name, '_', cellType_of_interest,".csv"))
+
+##### Keep only the top N genes for each PENCIL predicted label, ranked by logFC
+tumor_markerGenes1 = sig.markers$gene[sig.markers$cluster=='yes']
+PBMC_markerGenes1 = sig.markers$gene[sig.markers$cluster=='no']
+
+tumor_markerGene_ids1 <- mapIds(org.Hs.eg.db, keys = tumor_markerGenes1, column = "ENTREZID", keytype = "SYMBOL")
+PBMC_markerGene_ids1 <- mapIds(org.Hs.eg.db, keys = PBMC_markerGenes1, column = "ENTREZID", keytype = "SYMBOL")
+
+```
+
+# pathway enrichment analysis (Figure 3c)
+```{r}
+# 
+pa1 <- enrichPathway(gene = tumor_markerGene_ids1, organism = "human", pvalueCutoff = 0.05)
+pa2 <- enrichPathway(gene = PBMC_markerGene_ids1, organism = "human", pvalueCutoff = 0.05)
+# Create a dataframe to store the results of the enrichment analysis
+df <- data.frame(
+  pathway = c(pa1@result$Description, pa2@result$Description),
+  enrichment = c(pa1@result$pvalue, pa2@result$pvalue),
+  group = c(rep("Tumor",length(pa1@result$Description)), rep("PBMC",length(pa2@result$Description)))
+)
+
+# Arrange the plots side by side
+pdf(file = paste0(PENCIL_result_dir_deep, "Barplot_pathway_enrichment_PENCILpredLabel.pdf"), width = 14, height = 10*0.5) 
+p1 <- barplot(pa1, showCategory = 10,p.adjust.digits = 1)
+p2 <- barplot(pa2, showCategory = 10,p.adjust.digits = 1)
+grid.arrange(p1, p2, ncol = 2) + theme(axis.text.y = element_text(size = 12))
+dev.off()
+
+```
+
+
+# Calculate known ICB signature UCell score and ICG score
+```{r}
+
+ICB_sig <- list(
+    Exhaustion = c('PDCD1', 'CTLA4', 'LAG3', 'HAVCR2', 'TIGIT'), 
+    IFNG = c('IDO1', 'CXCL10', 'CXCL9', 'HLA-DRA', 'IFNG', 'STAT1'), 
+    TRM = c("IL17A", "IL10", "IL2", "IFNG", "DUSP6", "PDCD1", "CRTAM", "ITGA1", "ITGAE", "CD69", "CD101", "CXCR6", "SELL-", "S1PR1-", "S1PR5-", "CX3CR1-", "MKI67-", "KLF2-", "KLF3-") 
+)
+
+if('Exhaustion' %in% colnames(merged_seu@meta.data)) {
+  1
+} else {
+  merged_seu <- AddModuleScore_UCell(merged_seu, features=ICB_sig, name=NULL)
+}
+
+saveRDS(object = merged_seu, file = paste0(processed_dir_train,"seu_all_CD8T_PENCIL.rds")) 
+
+```
+
+# Violin plot of know signature scores for predicted tumor/PBMC cells (Figure 3d,e)
+```{r}
+
+merged_seu_subset = subset(merged_seu, subset = PENCIL_pred_label_tissue!='rej')
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "Exhaustion", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_Exhaustion.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$Exhaustion[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$Exhaustion[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "IFNG", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_IFNG.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$IFNG[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$IFNG[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "TRM", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_TRM.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset$TRM[merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset$TRM[merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
+
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "HLA-DRB1", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_HLA-DRB1.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["HLA-DRB1",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "LAG3", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_LAG3.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["LAG3",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+p <- VlnPlot(merged_seu_subset, group.by = "PENCIL_pred_label_tissue", features = "TIGIT", pt.size = 0, ncol = 1) +
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_TIGIT.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='yes'], merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='no'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='yes']) - mean(merged_seu_subset@assays[['RNA']]@data["TIGIT",merged_seu_subset$PENCIL_pred_label_tissue=='no']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+```
+
+
+
+
+
+
+# Violin plot of know signature scores for predicted vs true tumor originated cells (Supplementary Figure 3b)
+```{r}
+
+merged_seu_tumor_PENCIL = subset(merged_seu, subset = PENCIL_pred_label_tissue=='yes')
+merged_seu_tumor_PENCIL$label = "PENCIL"
+merged_seu_tumor_true = subset(merged_seu, subset = tissue==1)
+merged_seu_tumor_true$label = "True"
+merged_seu_tumor = merge(merged_seu_tumor_PENCIL, merged_seu_tumor_true)
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "Exhaustion", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_Exhaustion.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor$Exhaustion[merged_seu_tumor$label=='PENCIL'], merged_seu_tumor$Exhaustion[merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "IFNG", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_IFNG.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor$IFNG[merged_seu_tumor$label=='PENCIL'], merged_seu_tumor$IFNG[merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "TRM", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(0,1)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_TRM.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor$TRM[merged_seu_tumor$label=='PENCIL'], merged_seu_tumor$TRM[merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "HLA-DRB1", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_HLA-DRB1.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor@assays[['RNA']]@data["HLA-DRB1",merged_seu_tumor$label=='PENCIL'], merged_seu_tumor@assays[['RNA']]@data["HLA-DRB1",merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_tumor@assays[['RNA']]@data["HLA-DRB1",merged_seu_tumor$label=='PENCIL']) - mean(merged_seu_tumor@assays[['RNA']]@data["HLA-DRB1",merged_seu_tumor$label=='True']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "LAG3", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_LAG3.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor@assays[['RNA']]@data["LAG3",merged_seu_tumor$label=='PENCIL'], merged_seu_tumor@assays[['RNA']]@data["LAG3",merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_tumor@assays[['RNA']]@data["LAG3",merged_seu_tumor$label=='PENCIL']) - mean(merged_seu_tumor@assays[['RNA']]@data["LAG3",merged_seu_tumor$label=='True']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+
+
+p <- VlnPlot(merged_seu_tumor, group.by = "label", features = "TIGIT", pt.size = 0, ncol = 1) +
+  stat_summary(fun = "mean", geom = "point", color = "black", size = 3, shape = 16) +  # Add mean point
+  NoLegend()+
+  xlab("")+
+  ylab("")+
+  scale_fill_manual(values = c("#FD3A4A", "grey"))+
+  ylim(-0.1,5)
+p <- p + 
+  theme(axis.text.x = element_blank(),
+       axis.ticks.x = element_blank(),
+       legend.position = "none",
+       plot.title = element_blank(),
+       axis.title.x = element_blank(),
+       axis.title.y = element_blank())
+ggsave(plot = p,path = PENCIL_result_dir_deep,  filename = paste0("Vln_ICBsig_PENCIL_vs_True_TIGIT.pdf"),  width = 2, height = 2.5)
+
+# Perform the Wilcoxon rank sum test
+result <- wilcox.test(merged_seu_tumor@assays[['RNA']]@data["TIGIT",merged_seu_tumor$label=='PENCIL'], merged_seu_tumor@assays[['RNA']]@data["TIGIT",merged_seu_tumor$label=='True'])
+p_value <- result$p.value
+cat("logFC:", mean(merged_seu_tumor@assays[['RNA']]@data["TIGIT",merged_seu_tumor$label=='PENCIL']) - mean(merged_seu_tumor@assays[['RNA']]@data["TIGIT",merged_seu_tumor$label=='True']), "\n")
+cat("Wilcoxon Rank Sum Test p-value:", p_value, "\n")
+
+
+```
+
+
+
+# Identify DEGs for cells from tumor vs PBMC samples (without using PENCIL) on training data
+```{r}
+
+logFCfilter = 0.25
+adjPvalFilter = 0.05
+
+##### find all markers for PENCIL predicted labels
+Idents(object = merged_seu) <- merged_seu@meta.data$'tissue'
+Cells.markers = FindAllMarkers(merged_seu, only.pos=T, min.pct=0.25, logfc.threshold = logFCfilter)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+
+sig.markers = Cells.markers[(abs(as.numeric(as.vector(Cells.markers$avg_log2FC))) > logFCfilter & 
+                               as.numeric(as.vector(Cells.markers$p_val_adj)) < adjPvalFilter), ]
+
+write.csv(sig.markers, paste0(processed_dir_train, "sig.markers_trueLabel_",sampleType_name, '_', cellType_of_interest,".csv"))
+
+##### Keep only the top N genes for each PENCIL predicted label, ranked by logFC
+tumor_markerGenes2 = sig.markers$gene[sig.markers$cluster==1]
+PBMC_markerGenes2 = sig.markers$gene[sig.markers$cluster==0]
+
+tumor_markerGene_ids2 <- mapIds(org.Hs.eg.db, keys = tumor_markerGenes2, column = "ENTREZID", keytype = "SYMBOL")
+PBMC_markerGene_ids2 <- mapIds(org.Hs.eg.db, keys = PBMC_markerGenes2, column = "ENTREZID", keytype = "SYMBOL")
+
+```
+
+
+# using DEGs directly obtained from tumor vs PBMC samples (without using PENCIL) to predict cell origin (Supplementary Figure 3a)
+```{r}
+
+min_cellNum_per_sample = 50
+marker_gene_source = "trueLabel"
+topN_markergenes = 10000
+
+gene_set_list <- list(
+  GeneSet1 = names(tumor_markerGene_ids2)[1:min(length(tumor_markerGene_ids2),topN_markergenes)],
+  GeneSet2 = names(PBMC_markerGene_ids2)[1:min(length(PBMC_markerGene_ids2),topN_markergenes)]
+)
+
+result_list = list()
+
+#### 1) the training set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_train,"seu_all_CD8T_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$sample))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = sample %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$sample <- factor(merged_seu$sample)
+Idents(object = merged_seu) <- merged_seu@meta.data$'sample'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'sample'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'sample')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('sample', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$sample
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$sample = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("sample", "sample"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue > 0, 1, 0) 
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['train']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+#### 2) the test1 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test1,"seu_all3samples_CD8T_PENCIL.rds"))
+#merged_seu$meta = merged_seu$patient
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue > 0, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test1']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+#### 3) the test2 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test2,"seu_all_CD8T.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue == "Tumor", 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test2']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+
+
+
+#### 4) the test3 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test3,"seu_all_CD8T_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue == "1", 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test3']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+
+
+
+#### 5) the test4 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test4,"seu_Tumor_CD8T_tissue_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue == 1, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test4']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+
+
+
+#### 6) the test5 set (using CD8T pseudo-bulk)
+merged_seu = readRDS(file = paste0(processed_dir_test5,"seu_Tissue_CD8T_tissue_PENCIL.rds"))
+sample_cellNum = sort(table(merged_seu$meta))
+keep_sample = names(sample_cellNum)[sample_cellNum > min_cellNum_per_sample]
+merged_seu = subset(merged_seu, subset = meta %in% keep_sample)
+# make pseudo-bulk CD8T expression of each sample
+merged_seu$meta <- factor(merged_seu$meta)
+Idents(object = merged_seu) <- merged_seu@meta.data$'meta'
+pseudobulk_expression <- AverageExpression(merged_seu, slot = "data") # gives normalized value for each sample (10000)
+Idents(object = merged_seu) <- merged_seu@meta.data$'seurat_clusters'
+pseudobulk_mat_t <- t(pseudobulk_expression$RNA)
+pseudobulk_mat = t(scale(pseudobulk_mat_t)) # scale works for each column
+print(colnames(pseudobulk_mat))
+print(levels(merged_seu@meta.data$'meta'))
+colnames(pseudobulk_mat) = levels(merged_seu@meta.data$'meta')
+
+# extract phenotype for each sample
+phenotype_df = merged_seu@meta.data[c('meta', phenotype_name)]
+duplicated_rows <- duplicated(phenotype_df[, 1])
+phenotype_df <- phenotype_df[!duplicated_rows, ]
+rownames(phenotype_df) = phenotype_df$meta
+
+# Calculate the GSVA scores
+gsva_scores <- gsva(pseudobulk_mat, gene_set_list, method = "gsva")
+gsva_scores = data.frame(t(gsva_scores))
+if (is.null(gsva_scores$GeneSet1)){
+  gsva_scores$GeneSet1 = 0
+}
+if (is.null(gsva_scores$GeneSet2)){
+  gsva_scores$GeneSet2 = 0
+}
+gsva_scores$GSVA_diff = gsva_scores$GeneSet1 - gsva_scores$GeneSet2
+gsva_scores$meta = rownames(gsva_scores)
+gsva_scores <- merge(gsva_scores, phenotype_df, by = c("meta", "meta"), all = TRUE)
+
+# save to result
+cellOrigin <- ifelse(gsva_scores$tissue == 1, 1, 0)
+predictor = as.numeric(gsva_scores$GSVA_diff)
+result_list[['test5']] = data.frame(tissue = cellOrigin, GSVAscore = predictor)
+
+
+
+
+
+
+### barplot of GSVA scores in tumor and PBMC samples (train)
+plot_df <- result_list[[1]][order(result_list[[1]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_train.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+roc_curve <- roc(plot_df$tissue, plot_df$GSVAscore, direction = "<")
+auc_value <- auc(roc_curve)
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste(round(auc_value,3), round(acc_value,3)))
+
+### barplot of GSVA scores in tumor and PBMC samples (test1)
+plot_df <- result_list[[2]][order(result_list[[2]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_test1.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+roc_curve <- roc(plot_df$tissue, plot_df$GSVAscore, direction = "<")
+auc_value <- auc(roc_curve)
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste(round(auc_value,3), round(acc_value,3)))
+
+### barplot of GSVA scores in tumor and PBMC samples (test2)
+plot_df <- result_list[[3]][order(result_list[[3]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_test2.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+roc_curve <- roc(plot_df$tissue, plot_df$GSVAscore, direction = "<")
+auc_value <- auc(roc_curve)
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste(round(auc_value,3), round(acc_value,3)))
+
+### barplot of GSVA scores in tumor and PBMC samples (test3)
+plot_df <- result_list[[4]][order(result_list[[4]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_test3.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+roc_curve <- roc(plot_df$tissue, plot_df$GSVAscore, direction = "<")
+auc_value <- auc(roc_curve)
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste(round(auc_value,3), round(acc_value,3)))
+
+### barplot of GSVA scores in tumor and PBMC samples (test4)
+plot_df <- result_list[[5]][order(result_list[[5]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_test4.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste('Accuracy:', round(acc_value,3)))
+
+### barplot of GSVA scores in tumor and PBMC samples (test5)
+plot_df <- result_list[[6]][order(result_list[[6]]$tissue), ]
+sampleNum = nrow(plot_df)
+pdf(file = paste0(PENCIL_result_dir_deep, "GSVA_sig_barplot_tissue_",marker_gene_source,"_test5.pdf"),height = 2.5*0.68, width = 0.5+3.5/49*sampleNum) 
+ggplot(plot_df, aes(x = factor(1:sampleNum), y = GSVAscore)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  labs(x = "", y = "Score") +
+  theme(panel.grid = element_blank(), 
+        panel.background = element_rect(fill = "white"),
+        axis.line.y = element_line(color="black"),
+        axis.line.x = element_line(color="black"),
+        axis.ticks.y = element_line(color="black"),
+        axis.ticks.x = element_line(color="black"),
+        axis.text.y = element_text(color="black"),
+        axis.text.x = element_text(color="black"),
+        legend.position = "none") +
+  scale_x_discrete(breaks = NULL, labels = NULL) +
+   ylim(-2, 2) 
+dev.off()
+acc_value = mean(plot_df$tissue == (plot_df$GSVAscore>0))
+print(paste('Accuracy:', round(acc_value,3)))
+
+```
+
