@@ -2,7 +2,7 @@
 This is a reusability report of [PENCIL](https://doi.org/10.1038/s42256-023-00656-y).
 
 <p align="center">
-  <img src="./img/schema.jpg" width = "1000" alt="method" align=center />
+  <img src="./img/Schema.jpg" width = "1000" alt="method" align=center />
 </p>
 
 ## 1. How to reproduce figures in the reusability report
